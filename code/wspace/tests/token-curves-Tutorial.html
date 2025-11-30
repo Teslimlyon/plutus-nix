@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>TokenValidator.hs Smart Contract Tutorial</title>
+  <style>
+    body {
+      font-family: "Segoe UI", sans-serif;
+      background: #fdfdfd;
+      padding: 2px;
+      line-height: 1.7;
+      color: #222;
+      margin: auto;
+    }
+    h1, h2, h3 {
+      color: #002b45;
+    }
+    pre {
+      background: #f4f4f4;
+      padding: 10px;
+      border-radius: 6px;
+      overflow-x: auto;
+    }
+    code {
+      background: #eee;
+      padding: 2px 4px;
+      border-radius: 4px;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 10px;
+    }
+    table, th, td {
+      border: 1px solid #ccc;
+    }
+    th, td {
+      padding: 10px;
+      text-align: left;
+    }
+    a {
+      color: #0077cc;
+      text-decoration: none;
+    }
+    a:hover {
+      text-decoration: underline;
+    }
+    ul, ol {
+      padding-left: 1.2em;
+    }
+  </style>
+</head>
+<body>
+
+  <h1>🧾 Detailed Tutorial: Understanding and Using <code>TokenValidator.hs</code></h1>
+
+  <p>This tutorial explains the <code>TokenValidator.hs</code> module, which defines a multi-feature smart contract for token vesting, minting/burning, and compliance-based transfers. It highlights the structure, validation logic, and deployment steps necessary to execute the contract on the Cardano blockchain.</p>
+
+  <hr>
+
+  <h2>📚 Table of Contents</h2>
+  <ol>
+    <li><a href="#1-imports-overview">📦 Imports Overview</a></li>
+    <li><a href="#2-data-structures">🗃️ Data Structures</a></li>
+    <li><a href="#3-helper-functions">🔧 Helper Functions</a></li>
+    <li><a href="#4-core-validator-logic">🧠 Core Validator Logic</a></li>
+    <li><a href="#5-script-compilation">⚙️ Script Compilation</a></li>
+    <li><a href="#6-validator-hash--address">🏗️ Validator Hash & Address</a></li>
+    <li><a href="#7-practical-usage-example">🧪 Practical Usage Example</a></li>
+    <li><a href="#8-best-practices">✅ Best Practices</a></li>
+    <li><a href="#9-glossary-of-terms">📘 Glossary of Terms</a></li>
+  </ol>
+
+  <hr>
+
+  <h2 id="1-imports-overview">1. 📦 Imports Overview</h2>
+
+  <h3>Plutus API Modules</h3>
+  <ul>
+    <li><strong>Plutus.V2.Ledger.Api:</strong> Provides on-chain types like <code>Validator</code>, <code>ScriptContext</code>, <code>TxInfo</code>, and <code>POSIXTime</code>.</li>
+    <li><strong>Plutus.V2.Ledger.Contexts:</strong> Enables access to transaction details and signature validation.</li>
+    <li><strong>Plutus.V1.Ledger.Interval:</strong> Used for time-based checks such as vesting periods and refund windows.</li>
+    <li><strong>Plutus.V1.Ledger.Value:</strong> Supplies utilities for token and ADA value inspection (<code>valueOf</code>, <code>adaSymbol</code>).</li>
+  </ul>
+
+  <h3>Utility and Serialization Modules</h3>
+  <ul>
+    <li><strong>PlutusTx / PlutusTx.Prelude:</strong> Required for compiling on-chain logic to Plutus Core.</li>
+    <li><strong>Codec.Serialise / ByteString:</strong> Used for writing compiled validators into <code>.plutus</code> files.</li>
+    <li><strong>Cardano.Api / Shelley:</strong> Generates Bech32 addresses for testnet/mainnet deployment.</li>
+  </ul>
+
+  <hr>
+
+  <h2 id="2-data-structures">2. 🗃️ Data Structures</h2>
+
+  <h3><code>VestingDatum</code></h3>
+  <p>Defines parameters controlling a beneficiary’s vesting schedule.</p>
+  <ul>
+    <li><strong>vdBeneficiary</strong>: The public key hash of the token beneficiary.</li>
+    <li><strong>vdStart</strong>: Start time of vesting in <code>POSIXTime</code>.</li>
+    <li><strong>vdCliff</strong>: Earliest claimable time in the schedule.</li>
+    <li><strong>vdEnd</strong>: Vesting completion timestamp.</li>
+    <li><strong>vdTotal</strong>: Total vested token allocation.</li>
+  </ul>
+
+  <h3><code>ComplianceDatum</code></h3>
+  <p>Holds compliance and regulatory verification data for token transfers.</p>
+  <ul>
+    <li><strong>cdKYC</strong>: A hashed string reference to a verified KYC identity.</li>
+    <li><strong>cdWhitelisted</strong>: A list of public key hashes permitted to receive transfers.</li>
+  </ul>
+
+  <h3><code>TokenAction</code></h3>
+  <p>Defines what operation the transaction is attempting to perform.</p>
+  <ul>
+    <li><strong>MintToken Integer</strong>: Mints a specified number of tokens.</li>
+    <li><strong>BurnToken Integer</strong>: Burns a specified number of tokens.</li>
+    <li><strong>ClaimVested</strong>: Claims vested tokens if within the vesting window.</li>
+    <li><strong>TransferToken PubKeyHash</strong>: Transfers tokens to a whitelisted recipient.</li>
+  </ul>
+
+  <hr>
+
+  <h2 id="3-helper-functions">3. 🔧 Helper Functions</h2>
+
+  <ul>
+    <li><strong><code>inVestingPeriod</code></strong>: Checks whether the current transaction time overlaps with the beneficiary’s vesting period.</li>
+    <li><strong><code>signedBy</code></strong>: Confirms if a transaction was signed by a specific public key.</li>
+    <li><strong><code>isWhitelisted</code></strong>: Validates that a recipient address is listed in the compliance datum.</li>
+    <li><strong><code>bondingPrice</code></strong>: Illustrates a simple linear bonding curve model (1 token = 1000 lovelace).</li>
+  </ul>
+
+  <hr>
+
+  <h2 id="4-core-validator-logic">4. 🧠 Core Validator Logic</h2>
+
+  <h3><code>mkTokenValidator</code></h3>
+  <p>The validator defines rules that govern all token-related operations such as minting, burning, vesting claims, and transfers. Each action has its own security checks.</p>
+
+  <p><strong>Validation Rules:</strong></p>
+  <ul>
+    <li><strong>MintToken:</strong> Must be signed by the beneficiary and have a positive mint amount.</li>
+    <li><strong>BurnToken:</strong> Must be signed by the beneficiary and have a positive burn amount.</li>
+    <li><strong>ClaimVested:</strong> Only valid during the vesting period and signed by the beneficiary.</li>
+    <li><strong>TransferToken:</strong> The receiver must be whitelisted for compliance.</li>
+  </ul>
+
+  <pre><code>mkTokenValidator (vd, cd) action ctx =
+  case action of
+    MintToken amt ->
+      traceIfFalse "must be signed by beneficiary" (signedBy (vdBeneficiary vd) ctx) &&
+      traceIfFalse "amount must be positive" (amt > 0)
+    BurnToken amt ->
+      traceIfFalse "must be signed by beneficiary" (signedBy (vdBeneficiary vd) ctx) &&
+      traceIfFalse "amount must be positive" (amt > 0)
+    ClaimVested ->
+      traceIfFalse "not in vesting period" (inVestingPeriod vd ctx) &&
+      traceIfFalse "claim not signed by beneficiary" (signedBy (vdBeneficiary vd) ctx)
+    TransferToken to ->
+      traceIfFalse "recipient not whitelisted" (isWhitelisted to cd)
+  </code></pre>
+
+  <hr>
+
+  <h2 id="5-script-compilation">5. ⚙️ Script Compilation</h2>
+
+  <ul>
+    <li><strong><code>mkTokenValidatorUntyped</code></strong>: Converts the strongly-typed validator to the Plutus runtime format (<code>BuiltinData</code>).</li>
+    <li><strong><code>validator</code></strong>: Compiles the on-chain logic into a deployable Plutus script using Template Haskell.</li>
+  </ul>
+
+  <hr>
+
+  <h2 id="6-validator-hash--address">6. 🏗️ Validator Hash & Address</h2>
+  <ul>
+    <li><strong><code>plutusValidatorHash</code></strong>: Computes the script hash that uniquely identifies this validator.</li>
+    <li><strong><code>plutusScriptAddress</code></strong>: Generates the on-chain address for the validator script.</li>
+    <li><strong><code>toBech32ScriptAddress</code></strong>: Converts the on-chain address into human-readable Bech32 format.</li>
+  </ul>
+
+  <hr>
+
+  <h2 id="7-practical-usage-example">7. 🧪 Practical Usage Example</h2>
+
+  <pre><code>main :: IO ()
+main = do
+  let network = C.Testnet (C.NetworkMagic 1)
+  writeValidator "token_validator.plutus" validator
+
+  let vh      = plutusValidatorHash validator
+      onchain = plutusScriptAddress
+      bech32  = toBech32ScriptAddress network validator
+
+  putStrLn "\n--- Token Validator Info ---"
+  putStrLn $ "Validator Hash (Plutus): " <> P.show vh
+  putStrLn $ "Plutus Script Address:    " <> P.show onchain
+  putStrLn $ "Bech32 Script Address:    " <> bech32
+  putStrLn "---------------------------------"
+  putStrLn "Token validator (curves, vesting, compliance) generated successfully."
+  </code></pre>
+
+  <hr>
+
+  <h2 id="8-best-practices">8. ✅ Best Practices</h2>
+  <ul>
+    <li>Always validate time-based vesting conditions using <code>POSIXTime</code> intervals.</li>
+    <li>Keep compliance data updated and consistent with off-chain KYC systems.</li>
+    <li>Ensure all on-chain trace messages are descriptive for debugging.</li>
+    <li>Test vesting boundaries and whitelist logic under multiple scenarios before deployment.</li>
+    <li>Always deploy and test on Cardano <strong>testnet</strong> before moving to mainnet.</li>
+  </ul>
+
+  <hr>
+
+  <h2 id="9-glossary-of-terms">9. 📘 Glossary of Terms</h2>
+  <table>
+    <tr><th>Term</th><th>Definition</th></tr>
+    <tr><td><strong>VestingDatum</strong></td><td>On-chain data defining beneficiary vesting timelines and token allocation.</td></tr>
+    <tr><td><strong>ComplianceDatum</strong></td><td>Contains KYC and whitelist data for regulatory token transfers.</td></tr>
+    <tr><td><strong>TokenAction</strong></td><td>Redeemer specifying minting, burning, claiming, or transfer actions.</td></tr>
+    <tr><td><strong>Validator</strong></td><td>The smart contract enforcing token and compliance rules.</td></tr>
+    <tr><td><strong>POSIXTime</strong></td><td>Timestamp format used by Plutus for time-based logic.</td></tr>
+    <tr><td><strong>PubKeyHash</strong></td><td>Hashed wallet identifier for authentication.</td></tr>
+    <tr><td><strong>txSignedBy</strong></td><td>Checks if a transaction was signed by a specific key.</td></tr>
+    <tr><td><strong>Interval</strong></td><td>Represents valid time ranges for transaction execution.</td></tr>
+    <tr><td><strong>Bech32</strong></td><td>Human-readable encoding format for blockchain addresses.</td></tr>
+    <tr><td><strong>BuiltinData</strong></td><td>Serialized raw data format used by on-chain Plutus scripts.</td></tr>
+    <tr><td><strong>Testnet</strong></td><td>Cardano’s testing network environment for safe experimentation.</td></tr>
+  </table>
+
+</body>
+</html>

@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Jobs Smart Contract Tutorial</title>
+  <style>
+    body {
+      font-family: "Segoe UI", sans-serif;
+      background: #fdfdfd;
+      padding: 2px;
+      line-height: 1.7;
+      color: #222;
+      margin: auto;
+    }
+    h1, h2, h3 {
+      color: #002b45;
+    }
+    pre {
+      background: #f4f4f4;
+      padding: 10px;
+      border-radius: 6px;
+      overflow-x: auto;
+    }
+    code {
+      background: #eee;
+      padding: 2px 4px;
+      border-radius: 4px;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 10px;
+    }
+    table, th, td {
+      border: 1px solid #ccc;
+    }
+    th, td {
+      padding: 10px;
+      text-align: left;
+    }
+    a {
+      color: #0077cc;
+      text-decoration: none;
+    }
+    a:hover {
+      text-decoration: underline;
+    }
+    ul, ol {
+      padding-left: 1.2em;
+    }
+  </style>
+</head>
+<body>
+
+  <h1>🧾 Detailed Tutorial: Understanding and Using the <code>Jobs</code> Smart Contract</h1>
+
+  <p>This tutorial explains the Jobs smart contract, which manages salary streams, gig payments, and referral bonuses on Cardano. It covers datum types, validator logic, helper functions, and practical usage.</p>
+
+  <hr>
+
+  <h2>📚 Table of Contents</h2>
+  <ol>
+    <li><a href="#1-imports-overview">📦 Imports Overview</a></li>
+    <li><a href="#2-datum-types">🗃️ Datum Types</a></li>
+    <li><a href="#3-helper-functions">🔧 Helper Functions</a></li>
+    <li><a href="#4-validator-logic">🧠 Validator Logic</a></li>
+    <li><a href="#5-boilerplate">⚙️ Boilerplate Compilation</a></li>
+    <li><a href="#6-validator-hash-address">🏗️ Validator Hash & Address</a></li>
+    <li><a href="#7-practical-usage">🧪 Practical Usage Example</a></li>
+    <li><a href="#8-glossary">📘 Glossary of Terms</a></li>
+  </ol>
+
+  <hr>
+
+  <h2 id="1-imports-overview">1. 📦 Imports Overview</h2>
+
+  <h3>Plutus API & Ledger</h3>
+  <ul>
+    <li><strong>Plutus.V2.Ledger.Api:</strong> Core types like <code>ScriptContext</code>, <code>TxInfo</code>, <code>POSIXTime</code>, and <code>PubKeyHash</code>.</li>
+    <li><strong>Plutus.V2.Ledger.Contexts:</strong> Transaction validation helpers (<code>txSignedBy</code>).</li>
+    <li><strong>Plutus.V1.Ledger.Interval:</strong> Handles time intervals for deadlines and streams.</li>
+    <li><strong>Plutus.V1.Ledger.Value:</strong> Token and ADA operations (<code>valueOf</code>, <code>adaSymbol</code>, <code>adaToken</code>).</li>
+  </ul>
+
+  <h3>Utilities & Serialization</h3>
+  <ul>
+    <li><strong>PlutusTx / PlutusTx.Prelude:</strong> Script compilation and basic Plutus functions.</li>
+    <li><strong>Codec.Serialise / ByteString:</strong> Serialize scripts to <code>.plutus</code> files.</li>
+    <li><strong>Cardano.Api / Shelley:</strong> Generate Bech32 addresses and interact with Cardano networks.</li>
+  </ul>
+
+  <h2 id="2-datum-types">2. 🗃️ Datum Types</h2>
+
+  <h3><code>StreamDatum</code></h3>
+  <ul>
+    <li><strong>sEmployee</strong>: Employee PubKeyHash.</li>
+    <li><strong>sEmployer</strong>: Employer PubKeyHash.</li>
+    <li><strong>sRate</strong>: Payment rate per POSIX interval.</li>
+    <li><strong>sStart / sEnd</strong>: Stream start and end times.</li>
+    <li><strong>sClaimed</strong>: Amount already claimed.</li>
+  </ul>
+
+  <h3><code>GigDatum</code></h3>
+  <ul>
+    <li><strong>gPayer</strong>: Who pays for the gig.</li>
+    <li><strong>gWorker</strong>: Worker receiving payment.</li>
+    <li><strong>gMilestones</strong>: List of milestones and completion flags.</li>
+    <li><strong>gArbiter</strong>: PubKeyHash of arbiter for disputes.</li>
+  </ul>
+
+  <h3><code>ReferralDatum</code></h3>
+  <ul>
+    <li><strong>rReferrer</strong>: Referrer PubKeyHash.</li>
+    <li><strong>rCandidate</strong>: Candidate PubKeyHash.</li>
+    <li><strong>rBonus</strong>: Bonus in lovelace.</li>
+    <li><strong>rCliff</strong>: Earliest claim time.</li>
+    <li><strong>rClaimed</strong>: Whether bonus has been claimed.</li>
+  </ul>
+
+  <h3><code>JobAction</code></h3>
+  <ul>
+    <li><strong>ClaimStream</strong>: Claim streaming salary.</li>
+    <li><strong>PayMilestone Integer</strong>: Pay a milestone.</li>
+    <li><strong>ClaimReferral</strong>: Claim referral bonus.</li>
+  </ul>
+
+  <h2 id="3-helper-functions">3. 🔧 Helper Functions</h2>
+  <ul>
+    <li><strong>signedBy:</strong> Checks if a transaction is signed by a PubKeyHash.</li>
+    <li><strong>getCurrentTime:</strong> Returns current POSIX time from a transaction interval.</li>
+    <li><strong>posixToInteger:</strong> Converts <code>POSIXTime</code> to <code>Integer</code>.</li>
+  </ul>
+
+  <h2 id="4-validator-logic">4. 🧠 Validator Logic</h2>
+  <p>The validator ensures proper payment for streams, milestones, and referral claims:</p>
+
+  <ul>
+    <li><strong>ClaimStream:</strong> Checks elapsed time, calculates owed amount, ensures employee is paid, and signed.</li>
+    <li><strong>PayMilestone:</strong> Ensures payer signs, milestone is unpaid, and amount is transferred.</li>
+    <li><strong>ClaimReferral:</strong> Checks cliff, ensures not claimed, signed by referrer, and bonus is transferred.</li>
+  </ul>
+
+  <pre><code>mkJobValidator :: BuiltinData -> BuiltinData -> BuiltinData -> ()
+mkJobValidator d r c = ...</code></pre>
+
+  <h2 id="5-boilerplate">5. ⚙️ Boilerplate Compilation</h2>
+  <ul>
+    <li><strong>validator:</strong> Compiles typed validator to Plutus script.</li>
+    <li><strong>mkValidatorScript:</strong> Produces on-chain script.</li>
+  </ul>
+
+  <h2 id="6-validator-hash-address">6. 🏗️ Validator Hash & Address</h2>
+  <ul>
+    <li><strong>plutusValidatorHash:</strong> Generates validator hash.</li>
+    <li><strong>plutusScriptAddress:</strong> On-chain address from script hash.</li>
+    <li><strong>toBech32ScriptAddress:</strong> Convert validator to human-readable Bech32 address.</li>
+  </ul>
+
+  <h2 id="7-practical-usage">7. 🧪 Practical Usage Example</h2>
+
+  <pre><code>main :: IO ()
+main = do
+    let network = C.Testnet (C.NetworkMagic 1)
+    writeValidator "jobs_validator.plutus" validator
+
+    putStrLn "\n--- Jobs Smart Contract ---"
+    putStrLn $ "Validator Hash: " <> P.show (plutusValidatorHash validator)
+    putStrLn $ "Script Address: " <> P.show plutusScriptAddress
+    putStrLn $ "Bech32 Address: " <> toBech32ScriptAddress network validator
+    putStrLn "----------------------------"</code></pre>
+
+  <h2 id="8-glossary">8. 📘 Glossary of Terms</h2>
+  <table>
+    <tr><th>Term</th><th>Definition</th></tr>
+    <tr><td><strong>StreamDatum</strong></td><td>Represents a continuous salary stream for an employee.</td></tr>
+    <tr><td><strong>GigDatum</strong></td><td>Tracks gig milestone payments and arbiter information.</td></tr>
+    <tr><td><strong>ReferralDatum</strong></td><td>Handles referral bonuses with cliff time and claimed status.</td></tr>
+    <tr><td><strong>JobAction</strong></td><td>Redeemer action specifying type of claim or payment.</td></tr>
+    <tr><td><strong>POSIXTime</strong></td><td>Time representation for deadlines and payment schedules.</td></tr>
+    <tr><td><strong>PubKeyHash</strong></td><td>Cryptographic hash of a wallet public key.</td></tr>
+    <tr><td><strong>Validator</strong></td><td>On-chain Plutus script enforcing payment rules.</td></tr>
+    <tr><td><strong>Bech32</strong></td><td>Human-readable Cardano address format.</td></tr>
+  </table>
+
+</body>
+</html>

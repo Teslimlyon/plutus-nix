@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Military Procurement Smart Contract Tutorial</title>
+  <style>
+    body {
+      font-family: "Segoe UI", sans-serif;
+      background: #fdfdfd;
+      padding: 2px;
+      line-height: 1.7;
+      color: #222;
+      margin: auto;
+    }
+    h1, h2, h3 {
+      color: #002b45;
+    }
+    pre {
+      background: #f4f4f4;
+      padding: 10px;
+      border-radius: 6px;
+      overflow-x: auto;
+    }
+    code {
+      background: #eee;
+      padding: 2px 4px;
+      border-radius: 4px;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 10px;
+    }
+    table, th, td {
+      border: 1px solid #ccc;
+    }
+    th, td {
+      padding: 10px;
+      text-align: left;
+    }
+    a {
+      color: #0077cc;
+      text-decoration: none;
+    }
+    a:hover {
+      text-decoration: underline;
+    }
+    ul, ol {
+      padding-left: 1.2em;
+    }
+  </style>
+</head>
+<body>
+
+  <h1>🧾 Detailed Tutorial: Understanding and Using the <code>Military Procurement</code> Smart Contract</h1>
+
+  <p>
+    This tutorial explains the <code>Military Procurement</code> smart contract, which governs the secure transfer and verification of military parts using NFTs and SBTs (Soulbound Tokens) on Cardano. 
+    It covers datum structures, validator logic, helper utilities, and usage examples.
+  </p>
+
+  <hr>
+
+  <h2>📚 Table of Contents</h2>
+  <ol>
+    <li><a href="#1-imports-overview">📦 Imports Overview</a></li>
+    <li><a href="#2-datum-types">🗃️ Datum Types</a></li>
+    <li><a href="#3-helper-functions">🔧 Helper Functions</a></li>
+    <li><a href="#4-validator-logic">🧠 Validator Logic</a></li>
+    <li><a href="#5-validator-compilation">⚙️ Validator Compilation</a></li>
+    <li><a href="#6-validator-hash-address">🏗️ Validator Hash & Address</a></li>
+    <li><a href="#7-practical-usage">🧪 Practical Usage Example</a></li>
+    <li><a href="#8-glossary">📘 Glossary of Terms</a></li>
+  </ol>
+
+  <hr>
+
+  <h2 id="1-imports-overview">1. 📦 Imports Overview</h2>
+
+  <h3>Plutus Core & Ledger</h3>
+  <ul>
+    <li><strong>Plutus.V2.Ledger.Api:</strong> Core types such as <code>ScriptContext</code>, <code>TxInfo</code>, <code>PubKeyHash</code>, and <code>POSIXTime</code>.</li>
+    <li><strong>Plutus.V2.Ledger.Contexts:</strong> Utilities for transaction validation (<code>txSignedBy</code>).</li>
+    <li><strong>Plutus.V1.Ledger.Interval:</strong> Used for checking transaction time validity.</li>
+    <li><strong>Plutus.V1.Ledger.Value:</strong> ADA and token value operations (<code>valueOf</code>, <code>adaSymbol</code>, <code>adaToken</code>).</li>
+  </ul>
+
+  <h3>Utilities & Serialization</h3>
+  <ul>
+    <li><strong>PlutusTx / PlutusTx.Prelude:</strong> Compiles on-chain Haskell into Plutus Core.</li>
+    <li><strong>Codec.Serialise:</strong> Serializes the compiled validator into a <code>.plutus</code> file.</li>
+    <li><strong>Cardano.Api / Shelley:</strong> For generating Bech32 script addresses and interacting with networks.</li>
+  </ul>
+
+  <hr>
+
+  <h2 id="2-datum-types">2. 🗃️ Datum Types</h2>
+
+  <h3><code>PartNFT</code></h3>
+  <p>Represents a specific military part with embedded compliance data and ownership record.</p>
+  <ul>
+    <li><strong>partNSN:</strong> NATO Stock Number identifier.</li>
+    <li><strong>partLot:</strong> Manufacturing lot or batch number.</li>
+    <li><strong>partCompliance:</strong> Certification or compliance hash.</li>
+    <li><strong>partOwner:</strong> PubKeyHash of the part’s current owner.</li>
+  </ul>
+
+  <h3><code>RoleSBT</code></h3>
+  <p>Defines the holder’s role and authorization for part access or operations.</p>
+  <ul>
+    <li><strong>sbtUnit:</strong> Associated military unit or division.</li>
+    <li><strong>sbtRole:</strong> Role type (e.g., "OFFICER", "INSPECTOR").</li>
+    <li><strong>sbtExpiry:</strong> Expiry date for access rights.</li>
+    <li><strong>sbtOwner:</strong> PubKeyHash of the SBT holder.</li>
+  </ul>
+
+  <h3><code>MilitaryAction</code></h3>
+  <p>Redeemer defining permitted operations within the validator.</p>
+  <ul>
+    <li><strong>TransferPart:</strong> Authorizes the owner to transfer part ownership.</li>
+    <li><strong>CheckAccess:</strong> Validates if a user has SBT credentials to view/verify part data.</li>
+  </ul>
+
+  <hr>
+
+  <h2 id="3-helper-functions">3. 🔧 Helper Functions</h2>
+
+  <ul>
+    <li><strong>signedBy:</strong> Checks if a transaction is signed by a given PubKeyHash.</li>
+    <li><strong>getCurrentTime:</strong> Extracts the current transaction POSIX time.</li>
+    <li><strong>hasValidSBT:</strong> Verifies that an SBT token matches the signatory’s role and has not expired.</li>
+    <li><strong>pubKeyHashFromTxInfo:</strong> Fetches the primary signer from the transaction’s list of signatures.</li>
+  </ul>
+
+  <hr>
+
+  <h2 id="4-validator-logic">4. 🧠 Validator Logic</h2>
+
+  <p>
+    The <code>mkMilitaryValidator</code> function enforces security and compliance rules for part handling. 
+    It supports two main actions:
+  </p>
+
+  <h3><code>TransferPart</code></h3>
+  <ul>
+    <li>Ensures the transaction is signed by the <strong>current part owner</strong>.</li>
+    <li>Validates part metadata stored in the datum before ownership transfer.</li>
+  </ul>
+
+  <h3><code>CheckAccess</code></h3>
+  <ul>
+    <li>Checks for the existence of a valid <strong>RoleSBT</strong> assigned to the actor.</li>
+    <li>Verifies that the SBT role equals <code>"OFFICER"</code> and has not expired.</li>
+  </ul>
+
+  <pre><code>mkMilitaryValidator :: BuiltinData -> BuiltinData -> BuiltinData -> Bool
+mkMilitaryValidator d r c = ...
+-- Enforces authorized part transfers and role-based access checks.</code></pre>
+
+  <hr>
+
+  <h2 id="5-validator-compilation">5. ⚙️ Validator Compilation</h2>
+
+  <p>
+    The <code>mkValidatorUntyped</code> function wraps the typed validator for on-chain execution. 
+    It ensures <code>mkMilitaryValidator</code> runs properly as Plutus Core.
+  </p>
+
+  <ul>
+    <li><strong>validator:</strong> Compiled Plutus Core script ready for blockchain deployment.</li>
+    <li><strong>writeValidator:</strong> Exports the compiled validator to <code>military_validator.plutus</code>.</li>
+  </ul>
+
+  <hr>
+
+  <h2 id="6-validator-hash-address">6. 🏗️ Validator Hash & Address</h2>
+
+  <ul>
+    <li><strong>plutusValidatorHash:</strong> Generates the on-chain <code>ValidatorHash</code>.</li>
+    <li><strong>plutusScriptAddress:</strong> Builds the corresponding script <code>Address</code>.</li>
+    <li><strong>toBech32ScriptAddress:</strong> Converts the validator to a human-readable Bech32 format for deployment.</li>
+  </ul>
+
+  <hr>
+
+  <h2 id="7-practical-usage">7. 🧪 Practical Usage Example</h2>
+
+  <pre><code>main :: IO ()
+main = do
+    let network = C.Testnet (C.NetworkMagic 1)
+
+    writeValidator "military_validator.plutus" validator
+
+    let vh      = plutusValidatorHash validator
+        onchain = plutusScriptAddress
+        bech32  = toBech32ScriptAddress network validator
+
+    putStrLn "\n--- Military Procurement Validator ---"
+    putStrLn $ "Validator Hash (Plutus): " <> P.show vh
+    putStrLn $ "Plutus Script Address:    " <> P.show onchain
+    putStrLn $ "Bech32 Script Address:    " <> bech32
+    putStrLn "--------------------------------------"
+    putStrLn "Military procurement validator generated successfully."
+</code></pre>
+
+  <hr>
+
+  <h2 id="8-glossary">8. 📘 Glossary of Terms</h2>
+
+  <table>
+    <tr><th>Term</th><th>Definition</th></tr>
+    <tr><td><strong>PartNFT</strong></td><td>Represents a serialized, tokenized part with compliance and ownership data.</td></tr>
+    <tr><td><strong>RoleSBT</strong></td><td>Soulbound token defining a user's access role and expiry.</td></tr>
+    <tr><td><strong>MilitaryAction</strong></td><td>Redeemer that defines which action (transfer or access check) is executed.</td></tr>
+    <tr><td><strong>Validator</strong></td><td>Plutus script enforcing security, compliance, and access control rules.</td></tr>
+    <tr><td><strong>POSIXTime</strong></td><td>Timestamp used to determine access expiry and transaction timing.</td></tr>
+    <tr><td><strong>PubKeyHash</strong></td><td>Unique identifier derived from a user's public key for authentication.</td></tr>
+    <tr><td><strong>SBT (Soulbound Token)</strong></td><td>Non-transferable token that represents identity or role.</td></tr>
+    <tr><td><strong>Bech32</strong></td><td>Readable address format used for Cardano script addresses.</td></tr>
+    <tr><td><strong>Plutus Script</strong></td><td>On-chain smart contract logic compiled to Plutus Core.</td></tr>
+  </table>
+
+</body>
+</html>

@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>NFT Multi-Feature Smart Contract Tutorial</title>
+  <style>
+    body {
+      font-family: "Segoe UI", sans-serif;
+      background: #fdfdfd;
+      padding: 2px;
+      line-height: 1.7;
+      color: #222;
+      margin: auto;
+    }
+    h1, h2, h3 {
+      color: #002b45;
+    }
+    pre {
+      background: #f4f4f4;
+      padding: 10px;
+      border-radius: 6px;
+      overflow-x: auto;
+    }
+    code {
+      background: #eee;
+      padding: 2px 4px;
+      border-radius: 4px;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 10px;
+    }
+    table, th, td {
+      border: 1px solid #ccc;
+    }
+    th, td {
+      padding: 10px;
+      text-align: left;
+    }
+    a {
+      color: #0077cc;
+      text-decoration: none;
+    }
+    a:hover {
+      text-decoration: underline;
+    }
+    ul, ol {
+      padding-left: 1.2em;
+    }
+  </style>
+</head>
+<body>
+
+  <h1>🧾 Detailed Tutorial: Understanding and Using the <code>NFT Multi-Feature</code> Smart Contract</h1>
+
+  <p>
+    This tutorial explains the <code>nft_validator.hs</code> smart contract, which combines NFT rental, fractional ownership, and royalty distribution features within a single Plutus validator.
+    It highlights its core structure, on-chain logic, helper utilities, and deployment workflow.
+  </p>
+
+  <hr>
+
+  <h2>📚 Table of Contents</h2>
+  <ol>
+    <li><a href="#1-imports-overview">📦 Imports Overview</a></li>
+    <li><a href="#2-datum-and-redeemer">🗃️ Datum and Redeemer Structures</a></li>
+    <li><a href="#3-helper-functions">🔧 Helper Functions</a></li>
+    <li><a href="#4-core-validator-logic">🧠 Core Validator Logic</a></li>
+    <li><a href="#5-validator-compilation">⚙️ Validator Compilation</a></li>
+    <li><a href="#6-validator-hash-address">🏗️ Validator Hash & Address</a></li>
+    <li><a href="#7-practical-usage-example">🧪 Practical Usage Example</a></li>
+    <li><a href="#8-best-practices">✅ Best Practices</a></li>
+    <li><a href="#9-glossary-of-terms">📘 Glossary of Terms</a></li>
+  </ol>
+
+  <hr>
+
+  <h2 id="1-imports-overview">1. 📦 Imports Overview</h2>
+
+  <h3>Plutus Core and Ledger</h3>
+  <ul>
+    <li><strong>Plutus.V2.Ledger.Api:</strong> Provides core blockchain types such as <code>Validator</code>, <code>ScriptContext</code>, <code>TxInfo</code>, and <code>PubKeyHash</code>.</li>
+    <li><strong>Plutus.V2.Ledger.Contexts:</strong> Supplies helper functions like <code>txSignedBy</code> and <code>findOwnInput</code> for context checks.</li>
+    <li><strong>Plutus.V1.Ledger.Interval:</strong> Used to verify timing and expiry with <code>contains</code> and <code>from</code>.</li>
+    <li><strong>Plutus.V1.Ledger.Value:</strong> Used for token and ADA value calculations (<code>valueOf</code>, <code>adaSymbol</code>, <code>adaToken</code>).</li>
+  </ul>
+
+  <h3>Utility and Serialization Modules</h3>
+  <ul>
+    <li><strong>PlutusTx / PlutusTx.Prelude:</strong> Provides Plutus compilation macros and on-chain math functions.</li>
+    <li><strong>Codec.Serialise / ByteString:</strong> Used to serialize the Plutus script for deployment as a <code>.plutus</code> file.</li>
+    <li><strong>Cardano.Api / Shelley:</strong> Generates Bech32 addresses and handles network configuration for testnet/mainnet.</li>
+  </ul>
+
+  <hr>
+
+  <h2 id="2-datum-and-redeemer">2. 🗃️ Datum and Redeemer Structures</h2>
+
+  <h3><code>LeaseDatum</code></h3>
+  <p>Defines an NFT rental lease agreement with expiry and renter information.</p>
+  <ul>
+    <li><strong>ldNFT:</strong> Tuple of <code>(CurrencySymbol, TokenName)</code> identifying the NFT.</li>
+    <li><strong>ldRenter:</strong> The renter's public key hash.</li>
+    <li><strong>ldExpiry:</strong> POSIX timestamp indicating when the rental expires.</li>
+  </ul>
+
+  <h3><code>VaultDatum</code></h3>
+  <p>Tracks fractional ownership of the NFT across multiple stakeholders.</p>
+  <ul>
+    <li><strong>vdNFT:</strong> NFT identifier associated with the vault.</li>
+    <li><strong>vdShares:</strong> List of shareholders and their integer ownership units.</li>
+  </ul>
+
+  <h3><code>RoyaltyDatum</code></h3>
+  <p>Specifies royalty splits between creators and collaborators.</p>
+  <ul>
+    <li><strong>rdCreator:</strong> The creator’s PubKeyHash.</li>
+    <li><strong>rdSplit:</strong> A list of tuples defining payees and their royalty percentages (0–100).</li>
+  </ul>
+
+  <h3><code>NFTAction</code></h3>
+  <p>Defines the redeemer actions supported by the validator.</p>
+  <ul>
+    <li><strong>LeaseNFT:</strong> Initiate or record a rental of the NFT.</li>
+    <li><strong>ReturnNFT:</strong> Return NFT to the owner after expiry.</li>
+    <li><strong>MintFraction Integer:</strong> Fractionalize the NFT into integer shares.</li>
+    <li><strong>RedeemFraction Integer:</strong> Redeem ownership shares.</li>
+    <li><strong>DistributeRoyalty:</strong> Split revenue based on royalty percentages.</li>
+  </ul>
+
+  <hr>
+
+  <h2 id="3-helper-functions">3. 🔧 Helper Functions</h2>
+
+  <ul>
+    <li><strong><code>scriptInputContainsNFT</code>:</strong> Confirms that the validator’s own input UTxO contains the NFT being operated on.</li>
+    <li><strong><code>hasExpired</code>:</strong> Checks whether a rental has passed its expiry time.</li>
+    <li><strong><code>signedBy</code>:</strong> Ensures a transaction is signed by a specific PubKeyHash (e.g., renter, owner, or creator).</li>
+    <li><strong><code>valuePaidToPubKey</code>:</strong> Returns the value paid to a given wallet.</li>
+  </ul>
+
+  <hr>
+
+  <h2 id="4-core-validator-logic">4. 🧠 Core Validator Logic</h2>
+
+  <h3><code>mkNFTValidator</code></h3>
+  <p>
+    The validator enforces multiple types of NFT-related transactions depending on the action chosen.
+  </p>
+
+  <p><strong>Validation Rules:</strong></p>
+  <ul>
+    <li><strong>LeaseNFT:</strong> NFT must be present in the input and the renter must sign.</li>
+    <li><strong>ReturnNFT:</strong> NFT can only be returned after the lease expiry date.</li>
+    <li><strong>MintFraction:</strong> Only the NFT owner can fractionalize, and the minting amount must be positive.</li>
+    <li><strong>RedeemFraction:</strong> The redeemer must own valid shares before redeeming.</li>
+    <li><strong>DistributeRoyalty:</strong> All royalty splits must have valid positive allocations.</li>
+  </ul>
+
+  <pre><code>mkNFTValidator :: (LeaseDatum, VaultDatum, RoyaltyDatum) -> NFTAction -> ScriptContext -> Bool
+mkNFTValidator (leaseDat, vaultDat, royaltyDat) action ctx =
+    case action of
+        LeaseNFT ->
+            traceIfFalse "missing NFT" (scriptInputContainsNFT ctx nftCS nftTN) &&
+            traceIfFalse "renter not signed" (signedBy (ldRenter leaseDat) ctx)
+        ReturnNFT ->
+            traceIfFalse "too early" (hasExpired (ldExpiry leaseDat) ctx)
+        MintFraction amt ->
+            traceIfFalse "NFT required" (scriptInputContainsNFT ctx nftCS nftTN) &&
+            traceIfFalse "invalid amount" (amt > 0)
+        RedeemFraction amt ->
+            traceIfFalse "invalid shares" (amt > 0)
+        DistributeRoyalty ->
+            traceIfFalse "invalid splits" (all (>0) (map snd (rdSplit royaltyDat)))
+  where
+    nftCS = fst (ldNFT leaseDat)
+    nftTN = snd (ldNFT leaseDat)
+</code></pre>
+
+  <hr>
+
+  <h2 id="5-validator-compilation">5. ⚙️ Validator Compilation</h2>
+
+  <p>
+    The validator is compiled using <code>PlutusTx.compile</code> and serialized into a deployable
+    <code>.plutus</code> file.
+  </p>
+
+  <ul>
+    <li><strong><code>mkNFTValidatorUntyped</code></strong>: Wraps the validator for on-chain execution with <code>BuiltinData</code>.</li>
+    <li><strong><code>validator</code></strong>: The compiled Plutus script object.</li>
+  </ul>
+
+  <hr>
+
+  <h2 id="6-validator-hash-address">6. 🏗️ Validator Hash & Address</h2>
+
+  <ul>
+    <li><strong><code>plutusValidatorHash</code>:</strong> Generates the script hash (on-chain identifier).</li>
+    <li><strong><code>plutusScriptAddress</code>:</strong> Creates the on-chain script address for locking UTxOs.</li>
+    <li><strong><code>toBech32ScriptAddress</code>:</strong> Converts the validator to a readable Bech32 format.</li>
+  </ul>
+
+  <hr>
+
+  <h2 id="7-practical-usage-example">7. 🧪 Practical Usage Example</h2>
+
+  <pre><code>main :: IO ()
+main = do
+    let network = C.Testnet (C.NetworkMagic 1)
+    writeValidator "nft_validator.plutus" validator
+    let vh      = plutusValidatorHash validator
+        onchain = plutusScriptAddress
+        bech32  = toBech32ScriptAddress network validator
+    putStrLn "\n--- NFT Validator Info ---"
+    putStrLn $ "Validator Hash (Plutus): " <> P.show vh
+    putStrLn $ "Plutus Script Address:    " <> P.show onchain
+    putStrLn $ "Bech32 Script Address:    " <> bech32
+    putStrLn "---------------------------------"
+    putStrLn "NFT validator (rental, fractional, royalties) generated successfully."
+</code></pre>
+
+  <hr>
+
+  <h2 id="8-best-practices">8. ✅ Best Practices</h2>
+
+  <ul>
+    <li>Always confirm NFT ownership before minting or fractionalizing.</li>
+    <li>Ensure lease expiry times use proper POSIX intervals.</li>
+    <li>Validate royalty splits sum correctly to 100% before distribution.</li>
+    <li>Use trace messages liberally for clearer on-chain debugging.</li>
+    <li>Test across all NFTAction branches before deploying to mainnet.</li>
+  </ul>
+
+  <hr>
+
+  <h2 id="9-glossary-of-terms">9. 📘 Glossary of Terms</h2>
+  <table>
+    <tr><th>Term</th><th>Definition</th></tr>
+    <tr><td><strong>LeaseDatum</strong></td><td>Stores information about NFT rentals including renter and expiry time.</td></tr>
+    <tr><td><strong>VaultDatum</strong></td><td>Tracks fractional NFT ownership shares.</td></tr>
+    <tr><td><strong>RoyaltyDatum</strong></td><td>Defines creator royalties and payment splits.</td></tr>
+    <tr><td><strong>NFTAction</strong></td><td>Determines what operation (lease, mint, redeem, etc.) is being executed.</td></tr>
+    <tr><td><strong>Validator</strong></td><td>Smart contract enforcing NFT and token transaction rules.</td></tr>
+    <tr><td><strong>CurrencySymbol</strong></td><td>Unique identifier for a token’s policy on Cardano.</td></tr>
+    <tr><td><strong>TokenName</strong></td><td>The specific asset name for a token within its policy.</td></tr>
+    <tr><td><strong>ScriptContext</strong></td><td>Provides all transaction information during validation.</td></tr>
+    <tr><td><strong>Bech32</strong></td><td>Human-readable address format used on Cardano networks.</td></tr>
+    <tr><td><strong>POSIXTime</strong></td><td>Blockchain timestamp representation used for scheduling and expiry.</td></tr>
+    <tr><td><strong>Plutus Script</strong></td><td>Compiled smart contract executable on the Cardano blockchain.</td></tr>
+  </table>
+
+</body>
+</html>

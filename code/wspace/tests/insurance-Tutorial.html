@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Insurance Smart Contract Tutorial</title>
+  <style>
+    body {
+      font-family: "Segoe UI", sans-serif;
+      background: #fdfdfd;
+      padding: 2px;
+      line-height: 1.7;
+      color: #222;
+      margin: auto;
+    }
+    h1, h2, h3 {
+      color: #002b45;
+    }
+    pre {
+      background: #f4f4f4;
+      padding: 10px;
+      border-radius: 6px;
+      overflow-x: auto;
+    }
+    code {
+      background: #eee;
+      padding: 2px 4px;
+      border-radius: 4px;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 10px;
+    }
+    table, th, td {
+      border: 1px solid #ccc;
+    }
+    th, td {
+      padding: 10px;
+      text-align: left;
+    }
+    a {
+      color: #0077cc;
+      text-decoration: none;
+    }
+    a:hover {
+      text-decoration: underline;
+    }
+    ul, ol {
+      padding-left: 1.2em;
+    }
+  </style>
+</head>
+<body>
+
+  <h1>🧾 Detailed Tutorial: Insurance Smart Contract</h1>
+  <p>This tutorial explains the <code>Insurance</code> smart contract, covering datum and redeemer structures, validator logic, helper functions, script compilation, and addresses. This contract supports parametric and mutual insurance payouts on Cardano.</p>
+
+  <hr>
+
+  <h2>📚 Table of Contents</h2>
+  <ol>
+    <li><a href="#1-imports-overview">📦 Imports Overview</a></li>
+    <li><a href="#2-datum-redeemer-structures">🗃️ Datum & Redeemer Structures</a></li>
+    <li><a href="#3-helper-functions">🔧 Helper Functions</a></li>
+    <li><a href="#4-core-validator-logic">🧠 Core Validator Logic</a></li>
+    <li><a href="#5-script-compilation">⚙️ Script Compilation</a></li>
+    <li><a href="#6-validator-address">🏗️ Validator Hash & Address</a></li>
+    <li><a href="#7-practical-usage-example">🧪 Practical Usage Example</a></li>
+    <li><a href="#8-testing-strategy">🧷 Testing Strategy</a></li>
+    <li><a href="#9-best-practices">✅ Best Practices</a></li>
+    <li><a href="#10-glossary-of-terms">📘 Glossary of Terms</a></li>
+  </ol>
+
+  <hr>
+
+  <h2 id="1-imports-overview">1. 📦 Imports Overview</h2>
+
+  <h3>Plutus API Modules</h3>
+  <ul>
+    <li><strong>Plutus.V2.Ledger.Api & Contexts:</strong> Provides <code>ScriptContext</code>, <code>TxInfo</code>, <code>POSIXTime</code>, <code>PubKeyHash</code>, <code>Value</code>, and validation functions.</li>
+    <li><strong>Plutus.V1.Ledger.Interval:</strong> Time interval checks (<code>contains</code>, <code>from</code>, <code>to</code>).</li>
+    <li><strong>Plutus.V1.Ledger.Value:</strong> ADA and token handling (<code>valueOf</code>, <code>adaSymbol</code>, <code>adaToken</code>).</li>
+  </ul>
+
+  <h3>Utilities & Serialization</h3>
+  <ul>
+    <li><strong>PlutusTx / PlutusTx.Prelude:</strong> Compile Haskell to Plutus Core and basic scripting functions.</li>
+    <li><strong>Codec.Serialise / ByteString:</strong> Serialize validator scripts to <code>.plutus</code> format.</li>
+    <li><strong>Cardano.Api / Shelley:</strong> Generate Bech32 addresses and interact with Cardano networks.</li>
+  </ul>
+
+  <h2 id="2-datum-redeemer-structures">2. 🗃️ Datum & Redeemer Structures</h2>
+
+  <h3>PolicyDatum</h3>
+  <ul>
+    <li><strong>pdOwner:</strong> Owner wallet PubKeyHash.</li>
+    <li><strong>pdTrigger:</strong> Oracle feed identifier.</li>
+    <li><strong>pdPayout:</strong> Payout amount in lovelace.</li>
+    <li><strong>pdExpiry:</strong> POSIXTime of expiry/deadline.</li>
+    <li><strong>pdType:</strong> PolicyType (Parametric or Mutual).</li>
+  </ul>
+
+  <h3>MutualDatum</h3>
+  <ul>
+    <li><strong>mdPool:</strong> Total pool value.</li>
+    <li><strong>mdShares:</strong> List of participants with share amounts.</li>
+  </ul>
+
+  <h3>ClaimDatum</h3>
+  <ul>
+    <li><strong>cdClaimant:</strong> PubKeyHash of claimant.</li>
+    <li><strong>cdEvidence:</strong> Evidence of claim (oracle, document, etc.).</li>
+    <li><strong>cdStatus:</strong> Claim status ("Pending", "Approved", "Rejected").</li>
+  </ul>
+
+  <h3>InsuranceAction</h3>
+  <ul>
+    <li><strong>TriggerPayout:</strong> Trigger parametric payout after expiry and oracle confirmation.</li>
+    <li><strong>VoteClaim:</strong> Boolean vote on mutual insurance claim approval.</li>
+  </ul>
+
+  <h2 id="3-helper-functions">3. 🔧 Helper Functions</h2>
+  <ul>
+    <li><strong>hasDeadlinePassed:</strong> Checks if POSIXTime has passed in transaction context.</li>
+    <li><strong>signedBy:</strong> Verifies if transaction was signed by a given PubKeyHash.</li>
+    <li><strong>valuePaidToPubKey:</strong> Returns value paid to a specific PubKeyHash.</li>
+  </ul>
+
+  <h2 id="4-core-validator-logic">4. 🧠 Core Validator Logic</h2>
+
+  <p>The <code>mkInsuranceValidator</code> function enforces contract rules based on <code>InsuranceAction</code>:</p>
+  <ul>
+    <li><strong>TriggerPayout:</strong> Checks deadline, oracle trigger, and owner payout.</li>
+    <li><strong>VoteClaim:</strong> Ensures owner signed, pool has funds, and vote is respected.</li>
+  </ul>
+
+  <pre><code>{-# INLINABLE mkInsuranceValidator #-}
+mkInsuranceValidator :: PolicyDatum -> InsuranceAction -> ScriptContext -> Bool
+mkInsuranceValidator dat action ctx =
+    case action of
+        TriggerPayout -> ...
+        VoteClaim approved -> ...
+</code></pre>
+
+  <h2 id="5-script-compilation">5. ⚙️ Script Compilation</h2>
+  <ul>
+    <li><strong>mkInsuranceValidatorUntyped:</strong> Wraps typed validator for Plutus Core.</li>
+    <li><strong>insuranceValidator:</strong> Compiled Plutus script ready for blockchain deployment.</li>
+  </ul>
+
+  <h2 id="6-validator-address">6. 🏗️ Validator Hash & Address</h2>
+  <ul>
+    <li><strong>plutusValidatorHash:</strong> Generates on-chain <code>ValidatorHash</code>.</li>
+    <li><strong>insuranceScriptAddress:</strong> Cardano script address.</li>
+    <li><strong>toBech32ScriptAddress:</strong> Converts validator to Bech32 human-readable address.</li>
+  </ul>
+
+  <h2 id="7-practical-usage-example">7. 🧪 Practical Usage Example</h2>
+
+  <pre><code>main :: IO ()
+main = do
+    let network = C.Testnet (C.NetworkMagic 1)
+    writeValidator "insurance_validator.plutus" insuranceValidator
+    let vh      = plutusValidatorHash insuranceValidator
+        onchain = insuranceScriptAddress
+        bech32  = toBech32ScriptAddress network insuranceValidator
+    putStrLn $ "Validator Hash: " <> P.show vh
+    putStrLn $ "Plutus Script Address: " <> P.show onchain
+    putStrLn $ "Bech32 Address: " <> bech32
+</code></pre>
+
+  <h2 id="8-testing-strategy">8. 🧷 Testing Strategy</h2>
+  <ul>
+    <li>Test parametric payout with oracle trigger and deadline reached.</li>
+    <li>Test mutual claim voting by owner with sufficient pool funds.</li>
+    <li>Edge cases: unauthorized signatures, early payout, insufficient pool funds.</li>
+  </ul>
+
+  <h2 id="9-best-practices">9. ✅ Best Practices</h2>
+  <ul>
+    <li>Always validate oracle triggers and deadlines before payouts.</li>
+    <li>Ensure typed datum and redeemer structures match off-chain logic.</li>
+    <li>Use <code>traceIfFalse</code> with descriptive error messages for debugging.</li>
+    <li>Serialize scripts properly and generate Bech32 addresses for CLI deployment.</li>
+  </ul>
+
+  <h2 id="10-glossary-of-terms">10. 📘 Glossary of Terms</h2>
+  <table>
+    <tr><th>Term</th><th>Definition</th></tr>
+    <tr><td><strong>PolicyDatum</strong></td><td>Holds owner, trigger, payout, expiry, and policy type.</td></tr>
+    <tr><td><strong>MutualDatum</strong></td><td>Tracks mutual insurance pool and participant shares.</td></tr>
+    <tr><td><strong>ClaimDatum</strong></td><td>Represents a claim with claimant, evidence, and status.</td></tr>
+    <tr><td><strong>InsuranceAction</strong></td><td>Action redeemer (TriggerPayout or VoteClaim) for validator.</td></tr>
+    <tr><td><strong>Oracle Trigger</strong></td><td>External input to parametric policies to trigger payout.</td></tr>
+    <tr><td><strong>Validator</strong></td><td>Plutus script that enforces contract rules on-chain.</td></tr>
+    <tr><td><strong>POSIXTime</strong></td><td>Time representation used for deadlines and expiry.</td></tr>
+    <tr><td><strong>PubKeyHash</strong></td><td>Wallet identifier used for signature checks.</td></tr>
+    <tr><td><strong>Bech32</strong></td><td>Human-readable Cardano address format.</td></tr>
+    <tr><td><strong>traceIfFalse</strong></td><td>Debug helper for failed validation conditions.</td></tr>
+  </table>
+
+</body>
+</html>

@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>AI Validator Smart Contract Tutorial</title>
+  <style>
+    body {
+      font-family: "Segoe UI", sans-serif;
+      background: #fdfdfd;
+      padding: 20px;
+      line-height: 1.7;
+      color: #222;
+      max-width: 1000px;
+      margin: auto;
+    }
+    h1, h2, h3 {
+      color: #002b45;
+    }
+    pre {
+      background: #f4f4f4;
+      padding: 10px;
+      border-radius: 6px;
+      overflow-x: auto;
+    }
+    code {
+      background: #eee;
+      padding: 2px 4px;
+      border-radius: 4px;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 10px;
+    }
+    table, th, td {
+      border: 1px solid #ccc;
+    }
+    th, td {
+      padding: 10px;
+      text-align: left;
+    }
+    a {
+      color: #0077cc;
+      text-decoration: none;
+    }
+    a:hover {
+      text-decoration: underline;
+    }
+    ul, ol {
+      padding-left: 1.2em;
+    }
+  </style>
+</head>
+<body>
+
+  <h1>🤖 AI Compute + Data Labeling Smart Contract Tutorial</h1>
+
+  <p>This document provides a detailed walkthrough of the <code>AI Validator</code> smart contract, explaining how AI computation and labeling tasks can be automated, verified, and rewarded using the Cardano blockchain and Plutus V2.</p>
+
+  <hr>
+
+  <h2>📚 Table of Contents</h2>
+  <ol>
+    <li><a href="#imports">📦 Imports Overview</a></li>
+    <li><a href="#data">🗃️ Datum and Redeemer Structures</a></li>
+    <li><a href="#helpers">🔧 Helper Functions</a></li>
+    <li><a href="#validator">🧠 Core Validator Logic</a></li>
+    <li><a href="#compilation">⚙️ Script Compilation and Serialization</a></li>
+    <li><a href="#address">🏗️ Validator Hash and Address Generation</a></li>
+    <li><a href="#usage">🧪 Example Usage Workflow</a></li>
+    <li><a href="#testing">🧷 Testing Strategy</a></li>
+    <li><a href="#best">✅ Best Practices</a></li>
+    <li><a href="#glossary">📘 Glossary of Key Terms</a></li>
+  </ol>
+
+  <hr>
+
+  <h2 id="imports">1. 📦 Imports Overview</h2>
+
+  <p>The module imports standard Haskell and Plutus libraries necessary for building a full on-chain validator and off-chain serialization tools.</p>
+
+  <ul>
+    <li><strong>Plutus.V2.Ledger.Api / Contexts:</strong> Provides blockchain primitives like <code>TxInfo</code>, <code>ScriptContext</code>, <code>POSIXTime</code>, and <code>PubKeyHash</code>.</li>
+    <li><strong>PlutusTx.Prelude:</strong> Offers low-level functions for equality, arithmetic, and boolean logic inside on-chain code.</li>
+    <li><strong>Plutus.V1.Ledger.Interval:</strong> For handling deadlines using <code>contains</code> and <code>to</code> functions.</li>
+    <li><strong>Codec.Serialise:</strong> Serializes compiled validators into deployable <code>.plutus</code> scripts.</li>
+    <li><strong>Cardano.Api / Shelley:</strong> Used to generate Bech32 addresses from script hashes for testnet/mainnet deployment.</li>
+  </ul>
+
+  <h2 id="data">2. 🗃️ Datum and Redeemer Structures</h2>
+
+  <h3><code>JobDatum</code></h3>
+  <ul>
+    <li><strong>jdWorker:</strong> The wallet (AI node) performing compute tasks.</li>
+    <li><strong>jdVerifier:</strong> The authority verifying results (e.g., validator node).</li>
+    <li><strong>jdReward:</strong> Amount of ADA rewarded for valid work.</li>
+    <li><strong>jdDeadline:</strong> The maximum POSIX time before which results must be submitted.</li>
+    <li><strong>jdSpecHash:</strong> Hash of the AI model or dataset used for verification.</li>
+  </ul>
+
+  <h3><code>LabelTaskDatum</code></h3>
+  <ul>
+    <li><strong>ldWorker:</strong> Data labeler’s public key hash.</li>
+    <li><strong>ldItems:</strong> Total labeling items assigned.</li>
+    <li><strong>ldRewardPer:</strong> ADA reward per labeled item.</li>
+    <li><strong>ldQAThreshold:</strong> Maximum allowed quality adjustment.</li>
+  </ul>
+
+  <h3><code>AIAction</code> (Redeemer)</h3>
+  <table>
+    <tr><th>Action</th><th>Description</th></tr>
+    <tr><td><code>SubmitJobResult</code></td><td>Worker submits hash of the AI compute result.</td></tr>
+    <tr><td><code>VerifyJobResult</code></td><td>Verifier validates result and approves reward if successful.</td></tr>
+    <tr><td><code>SubmitLabels</code></td><td>Worker submits completed labeling results.</td></tr>
+    <tr><td><code>QAAdjust</code></td><td>Quality assurance adjusts final reward based on output quality.</td></tr>
+  </table>
+
+  <h2 id="helpers">3. 🔧 Helper Functions</h2>
+
+  <ul>
+    <li><strong><code>signedBy</code>:</strong> Confirms that a transaction is signed by a specific wallet (<code>PubKeyHash</code>).</li>
+    <li><strong><code>withinDeadline</code>:</strong> Ensures that a submission occurs before the defined deadline.</li>
+    <li><strong><code>payoutSufficient</code>:</strong> Validates that the worker received at least the agreed-upon ADA reward.</li>
+  </ul>
+
+  <h2 id="validator">4. 🧠 Core Validator Logic</h2>
+
+  <h3><code>mkAIValidator</code></h3>
+  <p>The main logic that checks whether an AI or labeling transaction meets the rules.</p>
+
+  <h4>Validation Scenarios</h4>
+  <ul>
+    <li><strong>SubmitJobResult:</strong> Worker must sign and submit before deadline.</li>
+    <li><strong>VerifyJobResult:</strong> Verifier must sign. If approved, worker must be paid the reward.</li>
+    <li><strong>SubmitLabels:</strong> Worker must not submit more items than assigned.</li>
+    <li><strong>QAAdjust:</strong> QA adjustment must not exceed defined threshold.</li>
+  </ul>
+
+  <pre><code>case action of
+  SubmitJobResult _ ->
+    traceIfFalse "not signed by worker" (signedBy (jdWorker job) ctx) &&
+    traceIfFalse "submission after deadline" (withinDeadline (jdDeadline job) ctx)
+
+  VerifyJobResult approved ->
+    traceIfFalse "not signed by verifier" (signedBy (jdVerifier job) ctx) &&
+    if approved
+      then traceIfFalse "worker not paid" (payoutSufficient (jdWorker job) (jdReward job) ctx)
+      else True
+
+  SubmitLabels n ->
+    traceIfFalse "not signed by worker" (signedBy (ldWorker label) ctx) &&
+    traceIfFalse "submitted more labels than task" (n <= ldItems label)
+
+  QAAdjust n ->
+    traceIfFalse "QA adjustment below threshold" (n <= ldQAThreshold label)
+</code></pre>
+
+  <h2 id="compilation">5. ⚙️ Script Compilation and Serialization</h2>
+
+  <ul>
+    <li><strong><code>mkAIValidatorUntyped</code>:</strong> Wraps the typed validator for compatibility with Plutus’ <code>BuiltinData</code> serialization.</li>
+    <li><strong><code>validator</code>:</strong> Uses Template Haskell (<code>$$(PlutusTx.compile ...)</code>) to compile into Plutus Core bytecode.</li>
+  </ul>
+
+  <h2 id="address">6. 🏗️ Validator Hash and Address Generation</h2>
+
+  <p>The script hash and Bech32 address are computed for deployment on testnet or mainnet using <code>Cardano.Api</code> utilities.</p>
+
+  <ul>
+    <li><strong><code>plutusValidatorHash</code>:</strong> Serializes the validator into a <code>ValidatorHash</code> recognized on-chain.</li>
+    <li><strong><code>plutusScriptAddress</code>:</strong> Creates an on-chain <code>Address</code> from the validator hash.</li>
+    <li><strong><code>toBech32ScriptAddress</code>:</strong> Converts it into a user-friendly Bech32 format for wallet and DApp interaction.</li>
+  </ul>
+
+  <h2 id="usage">7. 🧪 Example Usage Workflow</h2>
+
+  <pre><code>-- Compile and write the Plutus script
+writeValidator "ai_validator.plutus" validator
+
+-- Display Bech32 address
+putStrLn $ toBech32ScriptAddress (Testnet (NetworkMagic 1)) validator
+
+-- Interact via DApp using Lucid.js or cardano-cli
+# Example: Submit job result
+cardano-cli transaction build \
+  --tx-in ... \
+  --tx-out ... \
+  --tx-out-inline-datum-file jobDatum.json \
+  --tx-out-redeemer-file submitResult.json
+</code></pre>
+
+  <h2 id="testing">8. 🧷 Testing Strategy</h2>
+  <ul>
+    <li>Simulate both successful and failed submissions using the Plutus emulator.</li>
+    <li>Check edge cases: late submissions, incorrect verifier signatures, or insufficient payout.</li>
+    <li>Validate that multiple <code>LabelTaskDatum</code> instances handle label quantities correctly.</li>
+  </ul>
+
+  <h2 id="best">9. ✅ Best Practices</h2>
+  <ul>
+    <li>Keep <code>traceIfFalse</code> messages descriptive for easy on-chain debugging.</li>
+    <li>Separate <code>JobDatum</code> and <code>LabelTaskDatum</code> for modular contract design.</li>
+    <li>Always serialize the script with correct network magic (e.g., Testnet 1) before deployment.</li>
+    <li>Use <code>unsafeFromBuiltinData</code> carefully — ensure your Datum/Redeemer match exactly off-chain.</li>
+  </ul>
+
+  <h2 id="glossary">10. 📘 Glossary of Key Terms</h2>
+
+  <table>
+    <tr><th>Term</th><th>Definition</th></tr>
+    <tr><td><strong>JobDatum</strong></td><td>Defines compute job participants, deadlines, and rewards.</td></tr>
+    <tr><td><strong>LabelTaskDatum</strong></td><td>Represents data labeling tasks and QA thresholds.</td></tr>
+    <tr><td><strong>AIAction</strong></td><td>Describes all valid operations the smart contract accepts.</td></tr>
+    <tr><td><strong>Validator</strong></td><td>The Plutus script enforcing transaction rules.</td></tr>
+    <tr><td><strong>POSIXTime</strong></td><td>Cardano’s time format used for deadlines and intervals.</td></tr>
+    <tr><td><strong>PubKeyHash</strong></td><td>Identifier representing a wallet on-chain.</td></tr>
+    <tr><td><strong>PlutusTx</strong></td><td>Compiles Haskell functions into Plutus Core bytecode.</td></tr>
+    <tr><td><strong>Bech32</strong></td><td>Human-readable Cardano address encoding format.</td></tr>
+    <tr><td><strong>TraceIfFalse</strong></td><td>Debugging tool to identify which condition failed.</td></tr>
+  </table>
+
+</body>
+</html>

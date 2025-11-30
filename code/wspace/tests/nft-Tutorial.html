@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Event Ticket Smart Contract Tutorial</title>
+  <style>
+    body {
+      font-family: "Segoe UI", sans-serif;
+      background: #fdfdfd;
+      padding: 2px;
+      line-height: 1.7;
+      color: #222;
+      margin: auto;
+    }
+    h1, h2, h3 {
+      color: #002b45;
+    }
+    pre {
+      background: #f4f4f4;
+      padding: 10px;
+      border-radius: 6px;
+      overflow-x: auto;
+    }
+    code {
+      background: #eee;
+      padding: 2px 4px;
+      border-radius: 4px;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 10px;
+    }
+    table, th, td {
+      border: 1px solid #ccc;
+    }
+    th, td {
+      padding: 10px;
+      text-align: left;
+    }
+    a {
+      color: #0077cc;
+      text-decoration: none;
+    }
+    a:hover {
+      text-decoration: underline;
+    }
+    ul, ol {
+      padding-left: 1.2em;
+    }
+  </style>
+</head>
+<body>
+
+  <h1>🧾 Detailed Tutorial: Understanding and Using <code>EventTicket.hs</code></h1>
+
+  <p>
+    This tutorial explains the <code>EventTicket.hs</code> smart contract, which handles blockchain-based ticketing for events.
+    It supports ticket sales, sponsor-based settlements, and time-sensitive refund mechanisms using NFTs as proof of ticket ownership.
+  </p>
+
+  <hr>
+
+  <h2>📚 Table of Contents</h2>
+  <ol>
+    <li><a href="#1-imports-overview">📦 Imports Overview</a></li>
+    <li><a href="#2-datum-and-redeemer">🗃️ Datum and Redeemer</a></li>
+    <li><a href="#3-helper-functions">🔧 Helper Functions</a></li>
+    <li><a href="#4-core-validator-logic">🧠 Core Validator Logic</a></li>
+    <li><a href="#5-validator-compilation">⚙️ Validator Compilation</a></li>
+    <li><a href="#6-hash-address">🏗️ Validator Hash & Address</a></li>
+    <li><a href="#7-practical-usage-example">🧪 Practical Usage Example</a></li>
+    <li><a href="#8-best-practices">✅ Best Practices</a></li>
+    <li><a href="#9-glossary-of-terms">📘 Glossary of Terms</a></li>
+  </ol>
+
+  <hr>
+
+  <h2 id="1-imports-overview">1. 📦 Imports Overview</h2>
+
+  <h3>Plutus Core Modules</h3>
+  <ul>
+    <li><strong>Plutus.V2.Ledger.Api:</strong> Defines key blockchain types like <code>ScriptContext</code>, <code>Validator</code>, and <code>PubKeyHash</code>.</li>
+    <li><strong>Plutus.V2.Ledger.Contexts:</strong> Enables access to transaction info, signatures, and script inputs.</li>
+    <li><strong>Plutus.V1.Ledger.Interval:</strong> Provides time-interval checking for refund windows.</li>
+    <li><strong>Plutus.V1.Ledger.Value:</strong> Supplies tools to check token or ADA values (<code>valueOf</code>, <code>adaSymbol</code>).</li>
+  </ul>
+
+  <h3>Utility and Serialization Modules</h3>
+  <ul>
+    <li><strong>PlutusTx / PlutusTx.Prelude:</strong> Enable Haskell compilation to Plutus Core and define on-chain logic primitives.</li>
+    <li><strong>Codec.Serialise:</strong> Serializes Plutus scripts into deployable binary files.</li>
+    <li><strong>Cardano.Api / Shelley:</strong> Creates Bech32 addresses and manages Cardano testnet configurations.</li>
+  </ul>
+
+  <hr>
+
+  <h2 id="2-datum-and-redeemer">2. 🗃️ Datum and Redeemer</h2>
+
+  <h3><code>TicketDatum</code></h3>
+  <p>
+    Stores event ticket information and refund parameters. The datum ensures transparency between buyers, sellers, and sponsors.
+  </p>
+  <ul>
+    <li><strong>tdBuyer:</strong> Public key hash of the ticket purchaser.</li>
+    <li><strong>tdSeller:</strong> Event organizer or vendor’s public key hash.</li>
+    <li><strong>tdTier:</strong> Ticket level (e.g., Regular, VIP).</li>
+    <li><strong>tdPrice:</strong> Ticket price in lovelace (1 ADA = 1,000,000 lovelace).</li>
+    <li><strong>tdCurrency / tdToken:</strong> NFT identifying the ticket.</li>
+    <li><strong>tdRefundWin:</strong> POSIX timestamp indicating refund window expiry.</li>
+    <li><strong>tdRefundCause:</strong> Code for refund reason (e.g., 0=Cancelled, 1=Postponed).</li>
+    <li><strong>tdSponsors:</strong> List of sponsors to distribute revenue to.</li>
+    <li><strong>tdSplits:</strong> Corresponding revenue split percentages for each sponsor.</li>
+  </ul>
+
+  <h3><code>TicketAction</code></h3>
+  <p>Defines all valid redeemer actions supported by the contract.</p>
+  <ul>
+    <li><strong>BuyTicket:</strong> Buyer purchases the ticket and receives the NFT.</li>
+    <li><strong>ScanAndSettle:</strong> Event organizer validates entry and settles payments to sponsors.</li>
+    <li><strong>RequestRefund:</strong> Buyer requests refund within the refund window.</li>
+  </ul>
+
+  <hr>
+
+  <h2 id="3-helper-functions">3. 🔧 Helper Functions</h2>
+
+  <ul>
+    <li><strong><code>inputHasNFT</code>:</strong> Ensures the NFT (ticket) is included in the script input during validation.</li>
+    <li><strong><code>sponsorsPaid</code>:</strong> Validates that sponsors received the correct percentage of funds.</li>
+    <li><strong><code>sellerPaid</code>:</strong> Confirms the event organizer is paid for ticket purchases.</li>
+    <li><strong><code>buyerPaid</code>:</strong> Confirms refunds are properly transferred to the buyer when applicable.</li>
+  </ul>
+
+  <hr>
+
+  <h2 id="4-core-validator-logic">4. 🧠 Core Validator Logic</h2>
+
+  <h3><code>mkValidator</code></h3>
+  <p>
+    Defines how each ticket-related action is validated. Each branch ensures correct NFT handling and payment distribution.
+  </p>
+
+  <p><strong>Validation Rules:</strong></p>
+  <ul>
+    <li><strong>BuyTicket:</strong> Buyer must sign, seller must receive payment, and buyer receives NFT.</li>
+    <li><strong>ScanAndSettle:</strong> Seller must sign; all sponsors receive correct ADA splits.</li>
+    <li><strong>RequestRefund:</strong> Buyer must sign, request must be within refund window, and buyer receives full refund.</li>
+  </ul>
+
+  <pre><code>mkValidator :: TicketDatum -> TicketAction -> ScriptContext -> Bool
+mkValidator dat action ctx =
+    case action of
+      BuyTicket ->
+           traceIfFalse "NFT missing"       (inputHasNFT ctx cs tn) &&
+           traceIfFalse "buyer sig missing" (txSignedBy info buyer) &&
+           traceIfFalse "seller not paid"   (sellerPaid expectedPrice) &&
+           traceIfFalse "buyer missing NFT" (paidNFT buyer)
+      ScanAndSettle ->
+           traceIfFalse "NFT missing"       (inputHasNFT ctx cs tn) &&
+           traceIfFalse "seller sig missing" (txSignedBy info seller) &&
+           traceIfFalse "sponsor payments invalid"
+                (sponsorsPaid info (tdSponsors dat) (tdSplits dat) expectedPrice)
+      RequestRefund ->
+           traceIfFalse "NFT missing"        (inputHasNFT ctx cs tn) &&
+           traceIfFalse "buyer sig missing"  (txSignedBy info buyer) &&
+           traceIfFalse "refund window closed"
+                withinRefundWindow &&
+           traceIfFalse "refund not paid"    (buyerPaid expectedPrice)
+</code></pre>
+
+  <hr>
+
+  <h2 id="5-validator-compilation">5. ⚙️ Validator Compilation</h2>
+
+  <ul>
+    <li><strong><code>mkValidatorUntyped</code>:</strong> Converts the validator into the untyped format required by Plutus.</li>
+    <li><strong><code>validator</code>:</strong> Compiles and serializes the validator into a deployable Plutus Core script.</li>
+  </ul>
+
+  <hr>
+
+  <h2 id="6-hash-address">6. 🏗️ Validator Hash & Address</h2>
+
+  <ul>
+    <li><strong><code>plutusValidatorHash</code>:</strong> Generates a hash to identify the validator on-chain.</li>
+    <li><strong><code>plutusScriptAddress</code>:</strong> Produces the script address where users can send ADA or tokens.</li>
+    <li><strong><code>toBech32ScriptAddress</code>:</strong> Converts the script address to a human-readable Bech32 format for testnet/mainnet.</li>
+  </ul>
+
+  <hr>
+
+  <h2 id="7-practical-usage-example">7. 🧪 Practical Usage Example</h2>
+
+  <pre><code>main :: IO ()
+main = do
+    let network = C.Testnet (C.NetworkMagic 1)
+    writeValidator "event_ticket.plutus" validator
+    let vh      = plutusValidatorHash validator
+        onchain = plutusScriptAddress
+        bech32  = toBech32ScriptAddress network validator
+    putStrLn "\n--- Event Ticket Validator ---"
+    putStrLn $ "Validator Hash:    " <> P.show vh
+    putStrLn $ "Plutus Address:    " <> P.show onchain
+    putStrLn $ "Bech32 Address:    " <> bech32
+    putStrLn "--------------------------------"
+</code></pre>
+
+  <hr>
+
+  <h2 id="8-best-practices">8. ✅ Best Practices</h2>
+
+  <ul>
+    <li>Ensure NFT ticket uniqueness with distinct <code>CurrencySymbol</code> and <code>TokenName</code>.</li>
+    <li>Test refund logic thoroughly using <code>POSIXTime</code> edge cases.</li>
+    <li>Use <code>traceIfFalse</code> messages for clear debugging.</li>
+    <li>Verify sponsor percentages add up to 100% before deployment.</li>
+    <li>Always validate signatures for both buyer and seller in transactions.</li>
+  </ul>
+
+  <hr>
+
+  <h2 id="9-glossary-of-terms">9. 📘 Glossary of Terms</h2>
+
+  <table>
+    <tr><th>Term</th><th>Definition</th></tr>
+    <tr><td><strong>TicketDatum</strong></td><td>On-chain data defining ticket ownership, price, and refund rules.</td></tr>
+    <tr><td><strong>TicketAction</strong></td><td>Redeemer defining actions: Buy, Settle, or Refund.</td></tr>
+    <tr><td><strong>PubKeyHash</strong></td><td>Cryptographic hash identifying a user’s wallet.</td></tr>
+    <tr><td><strong>CurrencySymbol / TokenName</strong></td><td>Identifiers for NFT-based tickets.</td></tr>
+    <tr><td><strong>POSIXTime</strong></td><td>Blockchain-compatible timestamp for time-based logic.</td></tr>
+    <tr><td><strong>traceIfFalse</strong></td><td>Fails validation with a human-readable message when a condition fails.</td></tr>
+    <tr><td><strong>Plutus Script</strong></td><td>Compiled on-chain smart contract executable.</td></tr>
+    <tr><td><strong>Bech32</strong></td><td>Human-readable format for Cardano addresses.</td></tr>
+    <tr><td><strong>UTxO</strong></td><td>Unspent transaction output model used for smart contracts on Cardano.</td></tr>
+  </table>
+
+</body>
+</html>

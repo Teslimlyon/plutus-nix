@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Booking + Loyalty Smart Contract Tutorial</title>
+  <style>
+    body {
+      font-family: "Segoe UI", sans-serif;
+      background: #fdfdfd;
+      padding: 2px 20px;
+      line-height: 1.7;
+      color: #222;
+      margin: auto;
+    }
+    h1, h2, h3 { color: #002b45; }
+    pre { background: #f4f4f4; padding: 10px; border-radius: 6px; overflow-x: auto; }
+    code { background: #eee; padding: 2px 4px; border-radius: 4px; }
+    table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+    table, th, td { border: 1px solid #ccc; }
+    th, td { padding: 10px; text-align: left; }
+    a { color: #0077cc; text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    ul, ol { padding-left: 1.2em; }
+  </style>
+</head>
+<body>
+
+<h1>🧾 Detailed Tutorial: Booking + Loyalty Smart Contract</h1>
+
+<p>This tutorial explains your Booking + Loyalty smart contract, covering datum and redeemer structures, validator logic, helper functions, script compilation, addresses, and practical usage.</p>
+
+<hr>
+
+<h2>📚 Table of Contents</h2>
+<ol>
+  <li><a href="#1-imports-overview">📦 Imports Overview</a></li>
+  <li><a href="#2-datum-redeemer-structures">🗃️ Datum & Redeemer Structures</a></li>
+  <li><a href="#3-helper-functions">🔧 Helper Functions</a></li>
+  <li><a href="#4-core-validator-logic">🧠 Core Validator Logic</a></li>
+  <li><a href="#5-script-compilation">⚙️ Script Compilation & Serialization</a></li>
+  <li><a href="#6-validator-address">🏗️ Validator Hash & Address</a></li>
+  <li><a href="#7-practical-usage">🧪 Practical Usage Example</a></li>
+  <li><a href="#8-testing-strategy">🧷 Testing Strategy</a></li>
+  <li><a href="#9-best-practices">✅ Best Practices</a></li>
+  <li><a href="#10-glossary">📘 Glossary of Terms</a></li>
+</ol>
+
+<hr>
+
+<h2 id="1-imports-overview">1. 📦 Imports Overview</h2>
+<ul>
+  <li><strong>Plutus.V2.Ledger.Api & Contexts:</strong> Provides `ScriptContext`, `TxInfo`, `POSIXTime`, `PubKeyHash`, `CurrencySymbol`, `TokenName`, and transaction validation functions.</li>
+  <li><strong>Plutus.V1.Ledger.Interval:</strong> Time interval checks (`contains`, `to`, `from`).</li>
+  <li><strong>Plutus.V1.Ledger.Value:</strong> ADA and token handling (`valueOf`, `adaSymbol`, `adaToken`).</li>
+  <li><strong>PlutusTx / PlutusTx.Prelude:</strong> Compile Haskell to Plutus Core and provide scripting utilities.</li>
+  <li><strong>Codec.Serialise / Data.ByteString:</strong> Serialize validator scripts to `.plutus` format.</li>
+  <li><strong>Cardano.Api / Shelley:</strong> Generate Bech32 addresses and interact with Cardano networks.</li>
+</ul>
+
+<hr>
+
+<h2 id="2-datum-redeemer-structures">2. 🗃️ Datum & Redeemer Structures</h2>
+
+<h3>BookingDatum</h3>
+<ul>
+  <li><strong>bdHost</strong>: Host wallet.</li>
+  <li><strong>bdGuest</strong>: Guest wallet.</li>
+  <li><strong>bdStart / bdEnd</strong>: Booking start and end POSIXTime.</li>
+  <li><strong>bdPrice</strong>: Booking price in ADA.</li>
+  <li><strong>bdCancelBefore</strong>: Refund deadline.</li>
+  <li><strong>bdCurrency / bdToken</strong>: Booking NFT currency and token.</li>
+  <li><strong>bdLoyalCS / bdLoyalTN</strong>: Loyalty SBT currency and token.</li>
+</ul>
+
+<h3>BookingAction (Redeemer)</h3>
+<table>
+<tr><th>Action</th><th>Description</th></tr>
+<tr><td>PayHost</td><td>Guest completes booking → pay host + burn NFT</td></tr>
+<tr><td>CancelRefund</td><td>Guest cancels before deadline → refund</td></tr>
+<tr><td>CompleteStay</td><td>Host marks completion → loyalty points updated</td></tr>
+</table>
+
+<hr>
+
+<h2 id="3-helper-functions">3. 🔧 Helper Functions</h2>
+<ul>
+  <li><strong>scriptInputHasNFT:</strong> Checks that the script input contains the booking NFT.</li>
+</ul>
+
+<hr>
+
+<h2 id="4-core-validator-logic">4. 🧠 Core Validator Logic</h2>
+<p><strong>mkValidator:</strong> Enforces rules based on BookingAction.</p>
+<ul>
+  <li><strong>PayHost:</strong> Guest signature, NFT present, host paid, NFT burned.</li>
+  <li><strong>CancelRefund:</strong> Guest signature, NFT present, within cancel window, guest refunded.</li>
+  <li><strong>CompleteStay:</strong> Host signature, NFT present, after stay, guest has loyalty SBT, points increased.</li>
+</ul>
+
+<hr>
+
+<h2 id="5-script-compilation">5. ⚙️ Script Compilation & Serialization</h2>
+<ul>
+  <li><strong>mkValidatorUntyped:</strong> Wraps typed validator for Plutus Core.</li>
+  <li><strong>validator:</strong> Compiled Plutus Core script ready for blockchain deployment.</li>
+</ul>
+
+<hr>
+
+<h2 id="6-validator-address">6. 🏗️ Validator Hash & Address</h2>
+<ul>
+  <li><strong>plutusValidatorHash:</strong> Creates on-chain ValidatorHash.</li>
+  <li><strong>plutusScriptAddress:</strong> Generates Cardano script Address.</li>
+  <li><strong>toBech32ScriptAddress:</strong> Produces human-readable Bech32 address.</li>
+</ul>
+
+<hr>
+
+<h2 id="7-practical-usage">7. 🧪 Practical Usage Example</h2>
+<pre><code>writeValidator "booking-loyalty.plutus" validator
+
+let network = C.Testnet (C.NetworkMagic 1)
+let vh      = plutusValidatorHash validator
+let address = plutusScriptAddress
+let bech32  = toBech32ScriptAddress network validator
+
+putStrLn $ "Validator Hash: " <> P.show vh
+putStrLn $ "Plutus Address: " <> P.show address
+putStrLn $ "Bech32 Address: " <> bech32</code></pre>
+
+<hr>
+
+<h2 id="8-testing-strategy">8. 🧷 Testing Strategy</h2>
+<ul>
+  <li>Test booking completion with NFT burned and host paid.</li>
+  <li>Test guest cancellation before deadline with full refund.</li>
+  <li>Test loyalty point increment after stay completion.</li>
+  <li>Validate edge cases: missing NFT, wrong signatures, time violations.</li>
+</ul>
+
+<hr>
+
+<h2 id="9-best-practices">9. ✅ Best Practices</h2>
+<ul>
+  <li>Always check NFT presence before processing payments.</li>
+  <li>Use traceIfFalse for descriptive debugging messages.</li>
+  <li>Serialize scripts properly for deployment.</li>
+  <li>Ensure Datum and Redeemer structures match off-chain data.</li>
+</ul>
+
+<hr>
+
+<h2 id="10-glossary">10. 📘 Glossary of Terms</h2>
+<table>
+<tr><th>Term</th><th>Definition</th></tr>
+<tr><td>BookingDatum</td><td>Defines host, guest, booking times, price, NFT, and loyalty info.</td></tr>
+<tr><td>BookingAction</td><td>Valid actions to trigger payments, refunds, or loyalty updates.</td></tr>
+<tr><td>NFT</td><td>Non-fungible token representing the booking.</td></tr>
+<tr><td>SBT</td><td>Soulbound token representing loyalty points.</td></tr>
+<tr><td>Validator</td><td>Plutus script enforcing contract rules.</td></tr>
+<tr><td>POSIXTime</td><td>Time representation for deadlines and booking periods.</td></tr>
+<tr><td>PubKeyHash</td><td>Wallet identifier used on-chain.</td></tr>
+<tr><td>Bech32</td><td>Human-readable Cardano address format.</td></tr>
+<tr><td>traceIfFalse</td><td>Debug helper for failed validation conditions.</td></tr>
+</table>
+
+</body>
+</html>
