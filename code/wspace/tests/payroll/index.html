@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Payroll DApp (CBOR Hardcoded)</title>
+</head>
+<body>
+  <h1>Payroll DApp</h1>
+
+  <button id="connect-btn">🔗 Connect Wallet</button>
+
+  <h3>💰 Lock ADA to Payroll Script</h3>
+  <input id="amount" type="number" placeholder="Enter ADA amount" min="1" step="0.1">
+  <button id="lock-btn" disabled>Lock to Script</button>
+
+  <h3>🧾 Claim Payroll (Monthly)</h3>
+  <button id="claim-btn" disabled>Claim Now</button>
+
+  <div id="status" style="margin-top:20px; font-weight:bold;"></div>
+
+  <script type="module" src="payroll.js"></script>
+</body>
+</html>
