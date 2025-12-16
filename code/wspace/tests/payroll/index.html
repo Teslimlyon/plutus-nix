@@ -1,23 +1,27 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <title>Payroll DApp (CBOR Hardcoded)</title>
+  <meta charset="UTF-8">
+  <title>Payroll DApp</title>
+  <style>
+    body { font-family: sans-serif; margin: 40px; }
+    button { padding: 10px 15px; margin-top: 10px; cursor: pointer; }
+    input { padding: 5px; width: 200px; margin-top: 10px; }
+    #status { margin-top: 20px; font-weight: bold; }
+  </style>
 </head>
 <body>
-  <h1>Payroll DApp</h1>
+  <h1>💼 CoxEgen Payroll DApp</h1>
+  <p>Interact with your Payroll smart contract on Cardano Preprod.</p>
 
-  <button id="connect-btn">🔗 Connect Wallet</button>
+  <button id="connect-btn">Connect Wallet (Lace)</button>
+  <br><br>
 
-  <h3>💰 Lock ADA to Payroll Script</h3>
-  <input id="amount" type="number" placeholder="Enter ADA amount" min="1" step="0.1">
-  <button id="lock-btn" disabled>Lock to Script</button>
+  <input type="number" id="claim-amount" placeholder="Enter ADA to claim" />
+  <button id="claim-btn" disabled>Claim Monthly Pay</button>
 
-  <h3>🧾 Claim Payroll (Monthly)</h3>
-  <button id="claim-btn" disabled>Claim Now</button>
+  <div id="status"></div>
 
-  <div id="status" style="margin-top:20px; font-weight:bold;"></div>
-
-  <script type="module" src="payroll.js"></script>
+  <script type="module" src="offchain.js"></script>
 </body>
 </html>
