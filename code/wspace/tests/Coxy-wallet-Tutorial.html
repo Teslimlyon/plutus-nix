@@ -1,0 +1,223 @@
+
+```html
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>CoxyEscrow.hs Smart Contract Tutorial</title>
+  <style>
+    body {
+      font-family: "Segoe UI", sans-serif;
+      background: #fdfdfd;
+      padding: 2px;
+      line-height: 1.7;
+      color: #222;
+      margin: auto;
+    }
+    h1, h2, h3 {
+      color: #002b45;
+    }
+    pre {
+      background: #f4f4f4;
+      padding: 10px;
+      border-radius: 6px;
+      overflow-x: auto;
+    }
+    code {
+      background: #eee;
+      padding: 2px 4px;
+      border-radius: 4px;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 10px;
+    }
+    table, th, td {
+      border: 1px solid #ccc;
+    }
+    th, td {
+      padding: 10px;
+      text-align: left;
+    }
+    a {
+      color: #0077cc;
+      text-decoration: none;
+    }
+    a:hover {
+      text-decoration: underline;
+    }
+    ul, ol {
+      padding-left: 1.2em;
+    }
+  </style>
+</head>
+<body>
+
+  <h1>💼 Detailed Tutorial: Understanding and Using <code>CoxyEscrow.hs</code></h1>
+
+  <p>This tutorial explains the <code>CoxyEscrow.hs</code> Plutus smart contract. It manages an escrow mechanism between a buyer and seller, supporting multi-token transactions, refunds, and time-based logic for fair trade settlement.</p>
+
+  <hr>
+
+  <h2>📚 Table of Contents</h2>
+  <ol>
+    <li><a href="#1-imports-overview">📦 Imports Overview</a></li>
+    <li><a href="#2-data-structures">🗃️ Data Structures</a></li>
+    <li><a href="#3-helper-functions">🔧 Helper Functions</a></li>
+    <li><a href="#4-core-validator-logic">🧠 Core Validator Logic</a></li>
+    <li><a href="#5-script-compilation">⚙️ Script Compilation</a></li>
+    <li><a href="#6-validator-address">🏗️ Validator Address Generation</a></li>
+    <li><a href="#7-file-output">🗂️ Writing the Script to File</a></li>
+    <li><a href="#8-practical-example">🧪 Practical Example</a></li>
+    <li><a href="#9-testing-strategy">🧷 Testing Strategy</a></li>
+    <li><a href="#10-best-practices">✅ Best Practices</a></li>
+    <li><a href="#11-glossary">📘 Glossary of Terms</a></li>
+  </ol>
+
+  <hr>
+
+  <h2 id="1-imports-overview">1. 📦 Imports Overview</h2>
+  <p>The <code>CoxyEscrow.hs</code> module imports key Plutus libraries and Cardano API modules for smart contract functionality, serialization, and address generation.</p>
+
+  <ul>
+    <li><strong>Plutus.V2.Ledger.Api:</strong> Provides core ledger types like <code>Validator</code>, <code>ScriptContext</code>, and <code>POSIXTime</code>.</li>
+    <li><strong>Plutus.V2.Ledger.Contexts:</strong> Offers transaction context utilities such as <code>txSignedBy</code> and <code>valuePaidTo</code>.</li>
+    <li><strong>Plutus.V1.Ledger.Interval:</strong> Enables time-based validation logic through <code>Interval.from</code> and <code>Interval.contains</code>.</li>
+    <li><strong>Plutus.V1.Ledger.Value:</strong> Provides token management functions including <code>valueOf</code>, <code>adaSymbol</code>, and <code>adaToken</code>.</li>
+    <li><strong>PlutusTx:</strong> Handles Haskell-to-Plutus compilation and serialization.</li>
+    <li><strong>Cardano.Api / Shelley:</strong> Used to produce validator addresses in Bech32 format for testnet or mainnet.</li>
+  </ul>
+
+  <h2 id="2-data-structures">2. 🗃️ Data Structures</h2>
+
+  <h3><code>EscrowDatum</code></h3>
+  <p>The datum defines the escrow's core data stored on-chain:</p>
+  <ul>
+    <li><strong>edBuyer:</strong> Public key hash of the buyer.</li>
+    <li><strong>edSeller:</strong> Public key hash of the seller.</li>
+    <li><strong>edAmountADA:</strong> The amount of ADA to be transferred upon successful payment.</li>
+    <li><strong>edDeadline:</strong> The cutoff time (in <code>POSIXTime</code>) after which the seller can refund tokens.</li>
+    <li><strong>edTokens:</strong> A list of token tuples <code>(CurrencySymbol, TokenName, Integer)</code> involved in the transaction.</li>
+  </ul>
+
+  <h3><code>EscrowAction</code></h3>
+  <p>Defines the allowed actions in the escrow process:</p>
+  <ul>
+    <li><strong>PaySeller:</strong> Buyer confirms receipt, releasing ADA and tokens.</li>
+    <li><strong>RefundSeller:</strong> Seller reclaims tokens if the deadline has passed and buyer didn’t confirm.</li>
+  </ul>
+
+  <h2 id="3-helper-functions">3. 🔧 Helper Functions</h2>
+
+  <h3><code>scriptInputContainsTokens</code></h3>
+  <p>Checks if the escrow input contains the specified tokens.</p>
+  <pre><code>scriptInputContainsTokens ctx tokens =
+  case findOwnInput ctx of
+    Nothing -> traceError "no input from script found"
+    Just i  ->
+      let v = txOutValue $ txInInfoResolved i
+      in all (\(cs, tn, amt) -> valueOf v cs tn >= amt) tokens
+  </code></pre>
+
+  <h3><code>tokensPaidTo</code></h3>
+  <p>Ensures a specific address (buyer or seller) receives the correct tokens.</p>
+  <pre><code>tokensPaidTo info pkh tokens =
+  let v = valuePaidTo info pkh
+  in all (\(cs, tn, amt) -> valueOf v cs tn >= amt) tokens
+  </code></pre>
+
+  <h2 id="4-core-validator-logic">4. 🧠 Core Validator Logic</h2>
+
+  <h3><code>mkValidator</code></h3>
+  <p>The main validation logic governs two possible transaction flows: <strong>PaySeller</strong> and <strong>RefundSeller</strong>.</p>
+
+  <h4>PaySeller:</h4>
+  <ul>
+    <li>Buyer must sign the transaction.</li>
+    <li>Seller must receive the specified ADA amount.</li>
+    <li>Buyer must receive the correct tokens.</li>
+    <li>All required tokens must exist in the script input.</li>
+  </ul>
+
+  <h4>RefundSeller:</h4>
+  <ul>
+    <li>Seller must sign the transaction.</li>
+    <li>Refunds can only occur after the <code>edDeadline</code>.</li>
+    <li>Tokens must be paid back to the seller.</li>
+  </ul>
+
+  <h4>Deadline Enforcement:</h4>
+  <pre><code>afterDeadline = Interval.contains (Interval.from (edDeadline dat + 1)) txRange</code></pre>
+
+  <p>This ensures refunds are only allowed once the escrow period has expired.</p>
+
+  <h2 id="5-script-compilation">5. ⚙️ Script Compilation</h2>
+  <ul>
+    <li><strong><code>mkValidatorUntyped</code>:</strong> Converts the typed validator into Plutus <code>BuiltinData</code> for on-chain execution.</li>
+    <li><strong><code>validator</code>:</strong> Compiles the smart contract to Plutus Core bytecode via <code>PlutusTx.compile</code>.</li>
+  </ul>
+
+  <h2 id="6-validator-address">6. 🏗️ Validator Address Generation</h2>
+  <ul>
+    <li><strong><code>plutusValidatorHash</code>:</strong> Computes the validator hash from the compiled script.</li>
+    <li><strong><code>plutusScriptAddress</code>:</strong> Constructs a native Cardano address for the script.</li>
+    <li><strong><code>toBech32ScriptAddress</code>:</strong> Produces a Bech32 version of the address for human readability.</li>
+  </ul>
+
+  <h2 id="7-file-output">7. 🗂️ Writing the Script to File</h2>
+  <p>The validator script is serialized into a deployable file using:</p>
+  <pre><code>writeValidator "coxy-validator.plutus" validator</code></pre>
+
+  <h2 id="8-practical-example">8. 🧪 Practical Example</h2>
+  <pre><code>-- Compile and write validator file
+writeValidator "coxy-validator.plutus" validator
+
+-- Print the Bech32 address for testnet
+putStrLn $ toBech32ScriptAddress (C.Testnet (C.NetworkMagic 1)) validator
+
+-- Example Output:
+--- COXY Wallet Escrow Validator Info ---
+Validator Hash (Plutus): ...
+Plutus Script Address: ...
+Bech32 Script Address: addr_test1w...
+---------------------------------------
+COXY Escrow validator generated successfully.
+  </code></pre>
+
+  <h2 id="9-testing-strategy">9. 🧷 Testing Strategy</h2>
+  <ul>
+    <li>✅ Verify buyer and seller signatures under both scenarios.</li>
+    <li>✅ Test refund timing before and after the deadline.</li>
+    <li>✅ Confirm token amounts and ADA transfers are accurate.</li>
+    <li>✅ Validate multiple-token lists for correctness.</li>
+  </ul>
+
+  <h2 id="10-best-practices">10. ✅ Best Practices</h2>
+  <ul>
+    <li>Use <code>traceIfFalse</code> messages for debugging clarity.</li>
+    <li>Ensure correct <code>POSIXTime</code> usage for deadlines.</li>
+    <li>Keep buyer/seller roles consistent to avoid mis-signed transactions.</li>
+    <li>Test thoroughly in both <code>preprod</code> and <code>preview</code> networks before deploying to mainnet.</li>
+  </ul>
+
+  <h2 id="11-glossary">11. 📘 Glossary of Terms</h2>
+  <table>
+    <tr><th>Term</th><th>Definition</th></tr>
+    <tr><td><strong>Escrow</strong></td><td>A trustless contract that holds funds until certain conditions are met.</td></tr>
+    <tr><td><strong>Datum</strong></td><td>Defines state information such as buyer, seller, and deadlines.</td></tr>
+    <tr><td><strong>Redeemer</strong></td><td>Specifies the contract action (e.g., PaySeller or RefundSeller).</td></tr>
+    <tr><td><strong>Validator</strong></td><td>The on-chain Plutus script that validates transactions.</td></tr>
+    <tr><td><strong>POSIXTime</strong></td><td>Timestamp format used in Plutus for time validation.</td></tr>
+    <tr><td><strong>txSignedBy</strong></td><td>Checks if a transaction was signed by a specific public key hash.</td></tr>
+    <tr><td><strong>CurrencySymbol</strong></td><td>Unique identifier for a native token’s minting policy.</td></tr>
+    <tr><td><strong>TokenName</strong></td><td>The name of a token within a policy.</td></tr>
+    <tr><td><strong>valuePaidTo</strong></td><td>Retrieves the total value sent to a specific address.</td></tr>
+    <tr><td><strong>Bech32</strong></td><td>Human-readable format for Cardano addresses.</td></tr>
+    <tr><td><strong>Testnet</strong></td><td>Network environment for testing contracts safely.</td></tr>
+  </table>
+
+</body>
+</html>
+```
+
