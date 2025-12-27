@@ -83,6 +83,24 @@ executable escrow-exe
         cardano-ledger-shelley
     default-language:   Haskell2010
 
+executable crox-vault-exe
+    main-is:            Crox-vault.hs
+    hs-source-dirs:     tests
+    build-depends:
+        base >=4.14 && <5,
+        plutus-ledger-api,
+        plutus-tx,
+        plutus-tx-plugin,
+        bytestring,
+        serialise,
+        text,
+        containers,
+        cardano-api,
+        cardano-ledger-core,
+        cardano-ledger-shelley,
+        base16-bytestring
+    default-language:   Haskell2010
+
 executable game-stake-exe
     main-is:            Game-stake.hs
     hs-source-dirs:     tests

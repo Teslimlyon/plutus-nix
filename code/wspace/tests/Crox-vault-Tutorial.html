@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>CroxVault.hs Smart Contract Tutorial</title>
+  <style>
+    body {
+      font-family: "Segoe UI", sans-serif;
+      background: #fdfdfd;
+      padding: 2px;
+      line-height: 1.7;
+      color: #222;
+      margin: auto;
+    }
+    h1, h2, h3 {
+      color: #002b45;
+    }
+    pre {
+      background: #f4f4f4;
+      padding: 10px;
+      border-radius: 6px;
+      overflow-x: auto;
+    }
+    code {
+      background: #eee;
+      padding: 2px 4px;
+      border-radius: 4px;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 10px;
+    }
+    table, th, td {
+      border: 1px solid #ccc;
+    }
+    th, td {
+      padding: 10px;
+      text-align: left;
+    }
+    a {
+      color: #0077cc;
+      text-decoration: none;
+    }
+    a:hover {
+      text-decoration: underline;
+    }
+    ul, ol {
+      padding-left: 1.2em;
+    }
+  </style>
+</head>
+<body>
+
+  <h1>🏦 Detailed Tutorial: Understanding and Using <code>CroxVault.hs</code></h1>
+
+  <p>This tutorial explains the <code>CroxVault.hs</code> Plutus smart contract. The contract implements a token vault with a lock period, AI oracle–controlled yield updates, and secure deposit/withdrawal logic.</p>
+
+  <hr>
+
+  <h2>📚 Table of Contents</h2>
+  <ol>
+    <li><a href="#1-imports-overview">📦 Imports Overview</a></li>
+    <li><a href="#2-data-structures">🗃️ Data Structures</a></li>
+    <li><a href="#3-helper-functions">🔧 Helper Functions</a></li>
+    <li><a href="#4-core-validator-logic">🧠 Core Validator Logic</a></li>
+    <li><a href="#5-script-compilation">⚙️ Script Compilation</a></li>
+    <li><a href="#6-address-and-bech32">🏗️ Validator Address Generation</a></li>
+    <li><a href="#7-file-output">🗂️ Writing the Script to File</a></li>
+    <li><a href="#8-practical-example">🧪 Practical Example</a></li>
+    <li><a href="#9-testing-strategy">🧷 Testing Strategy</a></li>
+    <li><a href="#10-best-practices">✅ Best Practices</a></li>
+    <li><a href="#11-glossary">📘 Glossary of Terms</a></li>
+  </ol>
+
+  <hr>
+
+  <h2 id="1-imports-overview">1. 📦 Imports Overview</h2>
+  <p>The contract imports core Plutus libraries and Cardano API modules to handle ledger contexts, serialization, and Bech32 conversion.</p>
+
+  <ul>
+    <li><strong>Plutus.V2.Ledger.Api:</strong> Provides access to <code>Validator</code>, <code>ScriptContext</code>, and <code>POSIXTime</code>.</li>
+    <li><strong>Plutus.V2.Ledger.Contexts:</strong> Used for transaction-level utilities like <code>findOwnInput</code>, <code>getContinuingOutputs</code>, and <code>txSignedBy</code>.</li>
+    <li><strong>Plutus.V1.Ledger.Interval:</strong> Enables time interval logic through <code>Interval.from</code> and <code>Interval.contains</code>.</li>
+    <li><strong>PlutusTx:</strong> Compiles Haskell logic to on-chain Plutus Core.</li>
+    <li><strong>Cardano.Api / Shelley:</strong> Used to generate Bech32-compatible script addresses.</li>
+  </ul>
+
+  <h2 id="2-data-structures">2. 🗃️ Data Structures</h2>
+
+  <h3><code>CroxVaultDatum</code></h3>
+  <p>This datum defines the on-chain storage fields for each vault position:</p>
+  <ul>
+    <li><strong>cvUser:</strong> Wallet that owns and can withdraw the locked funds.</li>
+    <li><strong>cvTokenSymbol / cvTokenName:</strong> Identifies the token locked in the vault.</li>
+    <li><strong>cvAmount:</strong> Amount of the token locked.</li>
+    <li><strong>cvLockStart:</strong> Start timestamp for the lock.</li>
+    <li><strong>cvLockPeriod:</strong> Duration (in POSIX time) before withdrawal is allowed.</li>
+    <li><strong>cvYieldRate:</strong> Dynamic yield percentage, possibly updated by an AI oracle.</li>
+    <li><strong>cvAdmin:</strong> Authorized admin (AI oracle authority) who can call yield updates.</li>
+  </ul>
+
+  <h3><code>CroxVaultAction</code></h3>
+  <p>Defines what kind of transaction is being performed:</p>
+  <ul>
+    <li><strong>Deposit:</strong> User adds tokens into the vault.</li>
+    <li><strong>Withdraw:</strong> User withdraws after lock period.</li>
+    <li><strong>UpdateYield:</strong> Admin updates the vault’s yield rate.</li>
+  </ul>
+
+  <h2 id="3-helper-functions">3. 🔧 Helper Functions</h2>
+
+  <h3><code>isAfterLock</code></h3>
+  <p>Ensures withdrawals happen only after the lock period has expired.</p>
+  <pre><code>isAfterLock dat range =
+  let unlockTime = cvLockStart dat + cvLockPeriod dat
+  in Interval.contains (Interval.from unlockTime) range
+  </code></pre>
+
+  <h2 id="4-core-validator-logic">4. 🧠 Core Validator Logic</h2>
+
+  <h3><code>mkValidator</code></h3>
+  <p>This is the core on-chain function that enforces CroxVault rules depending on the action type:</p>
+
+  <ul>
+    <li><strong>Deposit:</strong> Must be signed by <code>cvUser</code>, and deposit must meet or exceed <code>cvAmount</code>.</li>
+    <li><strong>Withdraw:</strong> Must be signed by <code>cvUser</code>, lock period must be over, and returned amount must meet <code>expectedReturn</code>.</li>
+    <li><strong>UpdateYield:</strong> Must be signed by <code>cvAdmin</code>.</li>
+  </ul>
+
+  <p><strong>Yield Calculation:</strong></p>
+  <pre><code>expectedReturn = cvAmount dat + (cvAmount dat * cvYieldRate dat `divide` 100)
+  </code></pre>
+
+  <p>This simple yield logic can later be enhanced via an AI oracle off-chain.</p>
+
+  <h2 id="5-script-compilation">5. ⚙️ Script Compilation</h2>
+  <p>The validator is wrapped with <code>BuiltinData</code> conversion for blockchain deployment:</p>
+  <ul>
+    <li><strong><code>mkValidatorUntyped</code>:</strong> Converts typed validator to untyped form.</li>
+    <li><strong><code>validator</code>:</strong> Compiles to Plutus Core with <code>PlutusTx.compile</code>.</li>
+  </ul>
+
+  <h2 id="6-address-and-bech32">6. 🏗️ Validator Address Generation</h2>
+  <p>The script includes helper functions for computing on-chain addresses and hashes:</p>
+  <ul>
+    <li><strong><code>plutusValidatorHash</code>:</strong> Derives the on-chain hash from the validator script.</li>
+    <li><strong><code>plutusScriptAddress</code>:</strong> Builds a native Plutus address.</li>
+    <li><strong><code>toBech32ScriptAddress</code>:</strong> Converts to human-readable Bech32 format.</li>
+  </ul>
+
+  <h2 id="7-file-output">7. 🗂️ Writing the Script to File</h2>
+  <p>The validator is serialized and written to a <code>.plutus</code> file using:</p>
+  <pre><code>writeValidator "croxvault.plutus" validator</code></pre>
+
+  <h2 id="8-practical-example">8. 🧪 Practical Example</h2>
+  <pre><code>-- Compile and write the validator
+writeValidator "croxvault.plutus" validator
+
+-- Print Bech32 address on testnet
+putStrLn $ toBech32ScriptAddress (C.Testnet (C.NetworkMagic 1)) validator
+
+-- Expected Output
+--- CroxVault Validator Info ---
+Validator Hash (Plutus): ...
+Plutus Script Address: ...
+Bech32 Script Address: addr_test1w...
+---------------------------------
+CroxVault validator generated successfully.
+</code></pre>
+
+  <h2 id="9-testing-strategy">9. 🧷 Testing Strategy</h2>
+  <ul>
+    <li>✅ Test deposit scenarios with correct and incorrect users.</li>
+    <li>✅ Test withdrawal both before and after lock expiration.</li>
+    <li>✅ Simulate AI oracle yield updates using the <code>UpdateYield</code> action.</li>
+    <li>✅ Validate <code>expectedReturn</code> correctness across different yield rates.</li>
+  </ul>
+
+  <h2 id="10-best-practices">10. ✅ Best Practices</h2>
+  <ul>
+    <li>Use <code>traceIfFalse</code> to add helpful debugging outputs.</li>
+    <li>Always ensure correct use of <code>POSIXTime</code> and <code>POSIXTimeRange</code> for time-based logic.</li>
+    <li>Include admin-level controls for adjusting yield and vault policies safely.</li>
+    <li>Test in both preprod and preview networks before mainnet deployment.</li>
+  </ul>
+
+  <h2 id="11-glossary">11. 📘 Glossary of Terms</h2>
+  <table>
+    <tr><th>Term</th><th>Definition</th></tr>
+    <tr><td><strong>CroxVault</strong></td><td>A vault smart contract that locks tokens and manages yields.</td></tr>
+    <tr><td><strong>Datum</strong></td><td>On-chain data that stores state information like user, token, amount, and lock times.</td></tr>
+    <tr><td><strong>Redeemer</strong></td><td>Specifies the action (Deposit, Withdraw, UpdateYield) being performed.</td></tr>
+    <tr><td><strong>POSIXTime</strong></td><td>Timestamp format used in Plutus contracts.</td></tr>
+    <tr><td><strong>Validator</strong></td><td>A Plutus smart contract that approves or rejects transactions.</td></tr>
+    <tr><td><strong>txSignedBy</strong></td><td>Checks whether a transaction was signed by a given wallet.</td></tr>
+    <tr><td><strong>CurrencySymbol</strong></td><td>Unique identifier of a token policy on Cardano.</td></tr>
+    <tr><td><strong>TokenName</strong></td><td>Name of the token within a given currency policy.</td></tr>
+    <tr><td><strong>AI Oracle</strong></td><td>External process or service authorized to adjust yield rates.</td></tr>
+    <tr><td><strong>Bech32</strong></td><td>Human-readable encoding format for Cardano addresses.</td></tr>
+  </table>
+
+</body>
+</html>
