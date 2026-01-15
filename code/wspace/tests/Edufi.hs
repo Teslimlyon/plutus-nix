@@ -17,6 +17,8 @@ import qualified Plutus.V2.Ledger.Api as PlutusV2
 import PlutusTx
 import PlutusTx.Prelude hiding (Semigroup(..), unless)
 
+import Plutus.V1.Ledger.Value (valueOf, adaSymbol, adaToken)
+
 import qualified Codec.Serialise as Serialise
 import qualified Data.ByteString.Lazy  as LBS
 import qualified Data.ByteString.Short as SBS
@@ -30,52 +32,71 @@ import qualified Cardano.Api.Shelley as CS
 -- Datum & Redeemer
 ------------------------------------------------------------------------
 
-data StudentDatum = StudentDatum
-    { student      :: PubKeyHash
-    , stakeAmount  :: Integer
-    , lessonsDone  :: Integer
-    , totalLessons :: Integer
-    , rewardAmount :: Integer
+data EduDatum = EduDatum
+    { student         :: PubKeyHash           -- Student’s wallet
+    , stakeAmount     :: Integer              -- Staked ADA
+    , lessonsDone     :: Integer              -- Lessons completed (0–10)
+    , totalLessons    :: Integer              -- Total lessons (fixed: 10)
+    , rewardPerLesson :: Integer              -- Reward per lesson (0.5 ADA)
+    , lessonNotes     :: [BuiltinByteString]  -- Lesson URLs / IPFS hashes
     }
-PlutusTx.unstableMakeIsData ''StudentDatum
+PlutusTx.unstableMakeIsData ''EduDatum
 
-data StudentAction
-    = Stake Integer        -- amount staked
+data EduAction
+    = EnrollStudent
     | CompleteLesson
-    | WithdrawReward
-PlutusTx.unstableMakeIsData ''StudentAction
+    | ClaimAll
+PlutusTx.unstableMakeIsData ''EduAction
 
 ------------------------------------------------------------------------
--- Helper
+-- Helpers
 ------------------------------------------------------------------------
 
 {-# INLINABLE signedBy #-}
 signedBy :: PubKeyHash -> ScriptContext -> Bool
-signedBy pkh ctx =
-    txSignedBy (scriptContextTxInfo ctx) pkh
+signedBy pkh ctx = txSignedBy (scriptContextTxInfo ctx) pkh
+
+{-# INLINABLE adaPaidTo #-}
+adaPaidTo :: ScriptContext -> PubKeyHash -> Integer
+adaPaidTo ctx pkh =
+    let v = valuePaidTo (scriptContextTxInfo ctx) pkh
+    in valueOf v adaSymbol adaToken
 
 ------------------------------------------------------------------------
 -- Validator Logic
 ------------------------------------------------------------------------
 
 {-# INLINABLE mkEduFiValidator #-}
-mkEduFiValidator :: StudentDatum -> StudentAction -> ScriptContext -> Bool
+mkEduFiValidator :: EduDatum -> EduAction -> ScriptContext -> Bool
 mkEduFiValidator dat action ctx =
     case action of
 
-        -- Stake tokens to enroll
-        Stake amt ->
-            traceIfFalse "Stake must be positive" (amt > 0)
+        -- Student stakes ADA to enroll
+        EnrollStudent ->
+            traceIfFalse "stake must be positive" (stakeAmount dat > 0) &&
+            traceIfFalse "invalid lesson count" (totalLessons dat == 10) &&
+            traceIfFalse "student signature missing" (signedBy (student dat) ctx)
 
-        -- Complete a lesson
+        -- Student marks a lesson as completed
         CompleteLesson ->
-            traceIfFalse "Not a registered student" (signedBy (student dat) ctx) &&
-            traceIfFalse "All lessons already completed" (lessonsDone dat < totalLessons dat)
+            traceIfFalse "student signature missing" (signedBy (student dat) ctx) &&
+            traceIfFalse "all lessons already completed" (lessonsDone dat < totalLessons dat)
 
-        -- Withdraw unlocked reward
-        WithdrawReward ->
-            traceIfFalse "Not a registered student" (signedBy (student dat) ctx) &&
-            traceIfFalse "No reward available yet" (lessonsDone dat > 0)
+        -- Student claims total rewards and stake
+        ClaimAll ->
+            traceIfFalse "student signature missing" (signedBy (student dat) ctx) &&
+            traceIfFalse "not all lessons completed" (lessonsDone dat == totalLessons dat) &&
+            traceIfFalse "insufficient payout to student" paidCorrectAmount
+          where
+            totalReward :: Integer
+            totalReward = rewardPerLesson dat * totalLessons dat
+
+            expectedTotal :: Integer
+            expectedTotal = stakeAmount dat + totalReward
+
+            paidCorrectAmount :: Bool
+            paidCorrectAmount =
+                adaPaidTo ctx (student dat) >= expectedTotal
 
 ------------------------------------------------------------------------
 -- Untyped Wrapper
@@ -165,17 +186,18 @@ main :: IO ()
 main = do
     let network = C.Testnet (C.NetworkMagic 1)
 
-    writeValidator "edufi_pool.plutus" validator
-    writeCBOR      "edufi_pool.cbor"   validator
+    writeValidator "edufi_validator_nosig.plutus" validator
+    writeCBOR      "edufi_validator_nosig.cbor"   validator
 
     let vh      = plutusValidatorHash validator
         addr    = plutusScriptAddress
         bech32  = toBech32ScriptAddress network validator
         cborHex = validatorToCBORHex validator
 
-    putStrLn "\n--- EduFi Learn-to-Earn Pool ---"
+    putStrLn "\n--- EduFi Learn-to-Earn Smart Contract (No Educator Sig) ---"
     putStrLn $ "Validator Hash: " <> P.show vh
     putStrLn $ "Script Address: " <> P.show addr
     putStrLn $ "Bech32 Address: " <> bech32
     putStrLn $ "CBOR Hex (first 120 chars): " <> P.take 120 cborHex <> "..."
-    putStrLn "--------------------------------"
+    putStrLn "--------------------------------------------------------------"
+    putStrLn "EduFi validator (self-learning mode) compiled successfully."
